@@ -1,0 +1,19 @@
+{
+  "name": "@wb/core",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "scripts": { "build": "tsc -p .", "test": "vitest run" },
+  "dependencies": {
+    "@wb/schema": "workspace:*",
+    "@wb/components": "workspace:*",
+    "@wb/renderer": "workspace:*",
+    "@wb/template-breakthrough-medical": "workspace:*",
+    "better-sqlite3": "^11.8.1",
+    "nanoid": "^5.0.9",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": { "@types/better-sqlite3": "^7.6.12", "typescript": "^5.7.3", "vitest": "^3.0.5" }
+}

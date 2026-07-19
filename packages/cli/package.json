@@ -1,0 +1,16 @@
+{
+  "name": "@wb/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": { "wb": "dist/index.js" },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": { "build": "tsc -p .", "test": "echo no tests" },
+  "dependencies": {
+    "@wb/core": "workspace:*",
+    "@wb/server": "workspace:*",
+    "@wb/mcp": "workspace:*",
+    "commander": "^13.1.0"
+  },
+  "devDependencies": { "typescript": "^5.7.3" }
+}

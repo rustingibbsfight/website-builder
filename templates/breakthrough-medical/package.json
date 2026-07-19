@@ -1,0 +1,11 @@
+{
+  "name": "@wb/template-breakthrough-medical",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" } },
+  "scripts": { "build": "tsc -p .", "test": "echo no tests" },
+  "dependencies": { "@wb/schema": "workspace:*" },
+  "devDependencies": { "typescript": "^5.7.3" }
+}

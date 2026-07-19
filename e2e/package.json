@@ -1,0 +1,8 @@
+{
+  "name": "@wb/e2e",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "echo skip", "test": "echo skip", "e2e": "playwright test" },
+  "devDependencies": { "@playwright/test": "^1.50.1", "typescript": "^5.7.3" }
+}
