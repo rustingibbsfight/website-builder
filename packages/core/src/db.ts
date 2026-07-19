@@ -71,20 +71,36 @@ export async function openDb(opts: DbOptions): Promise<Client> {
 
   // Best-effort: enforce foreign keys where the backend honors the pragma.
   // deleteSite also cleans up children explicitly, so correctness never relies
-  // on cascade being active.
+  // on cascade being active. (Remote Turso rejects write-form pragmas — hence
+  // the try/catch, and hence schema versioning via a table below, not
+  // PRAGMA user_version.)
   try {
     await client.execute('PRAGMA foreign_keys = ON');
   } catch {
-    /* remote backends may ignore connection pragmas */
+    /* remote backends may ignore/deny connection pragmas */
   }
 
-  const version = Number(
-    (await client.execute('PRAGMA user_version')).rows[0]?.user_version ?? 0,
+  await client.execute('CREATE TABLE IF NOT EXISTS _wb_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+  let version = Number(
+    (await client.execute({ sql: 'SELECT value FROM _wb_meta WHERE key = ?', args: ['schema_version'] }))
+      .rows[0]?.value ?? 0,
   );
+  // Compatibility: a local DB migrated by the older PRAGMA-based scheme has the
+  // tables but no _wb_meta row — treat it as fully migrated so we don't re-run.
+  if (version === 0) {
+    const hasSites = (
+      await client.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='sites'")
+    ).rows.length > 0;
+    if (hasSites) version = MIGRATIONS.length;
+  }
   for (let v = version; v < MIGRATIONS.length; v++) {
     await client.executeMultiple(MIGRATIONS[v]!);
-    await client.execute(`PRAGMA user_version = ${v + 1}`);
   }
+  await client.execute({
+    sql: `INSERT INTO _wb_meta (key, value) VALUES ('schema_version', ?)
+          ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    args: [String(MIGRATIONS.length)],
+  });
   return client;
 }
 
