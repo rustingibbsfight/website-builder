@@ -5,7 +5,7 @@
   "bin": { "wb": "dist/index.js" },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "scripts": { "build": "tsc -p .", "test": "echo no tests" },
+  "scripts": { "build": "tsc -p .", "test": "vitest run" },
   "dependencies": {
     "@wb/core": "workspace:*",
     "@wb/components": "workspace:*",
@@ -13,5 +13,5 @@
     "@wb/mcp": "workspace:*",
     "commander": "^13.1.0"
   },
-  "devDependencies": { "typescript": "^5.7.3" }
+  "devDependencies": { "typescript": "^5.7.3", "vitest": "^3.0.5" }
 }

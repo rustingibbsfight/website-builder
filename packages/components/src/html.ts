@@ -14,6 +14,16 @@ export function safeHref(href: string): string {
   return SAFE_HREF.test(trimmed) ? escapeHtml(trimmed) : '#';
 }
 
+/**
+ * Make a URL safe to embed inside a CSS url('...') without breaking out of the
+ * string, declaration, or rule. Strips quotes, parens, backslashes, angle
+ * brackets, semicolons, braces, and whitespace. Returns '' if nothing usable
+ * remains — callers should skip emitting the declaration in that case.
+ */
+export function cssUrl(url: string): string {
+  return url.replace(/["'()\\;{}<>]/g, '').replace(/\s+/g, '');
+}
+
 export function attrs(obj: Record<string, string | number | boolean | undefined>): string {
   return Object.entries(obj)
     .filter(([, v]) => v !== undefined && v !== false)

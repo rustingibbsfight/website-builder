@@ -58,6 +58,45 @@ describe('event filtering and thread mapping', () => {
       { role: 'user', content: 'now make the primary color green' },
     ]);
   });
+
+  it('always yields a conversation starting with a user turn (API invariant)', () => {
+    // Thread that (pathologically) starts with a bot message.
+    const turns = threadToConversation(
+      [
+        { ts: '1', text: 'I did a thing.', bot_id: 'B1' },
+        { ts: '2', text: 'ok do another', user: 'U1' },
+      ],
+      'ok do another',
+    );
+    expect(turns[0]!.role).toBe('user');
+  });
+
+  it('appends the latest text when the thread ends on a bot turn', () => {
+    const turns = threadToConversation(
+      [
+        { ts: '1', text: 'make a site', user: 'U1' },
+        { ts: '2', text: 'done', bot_id: 'B1' },
+      ],
+      'now publish it',
+    );
+    expect(turns[turns.length - 1]).toEqual({ role: 'user', content: 'now publish it' });
+  });
+
+  it('handles an empty thread by falling back to the latest message', () => {
+    expect(threadToConversation([], '<@U1> hi')).toEqual([{ role: 'user', content: 'hi' }]);
+  });
+
+  it('drops subtype/empty messages from the reconstructed thread', () => {
+    const turns = threadToConversation(
+      [
+        { ts: '1', text: 'build', user: 'U1' },
+        { ts: '2', text: 'joined', user: 'U2', subtype: 'channel_join' },
+        { ts: '3', text: '', user: 'U1' },
+      ],
+      'build',
+    );
+    expect(turns).toEqual([{ role: 'user', content: 'build' }]);
+  });
 });
 
 describe('mrkdwn conversion', () => {

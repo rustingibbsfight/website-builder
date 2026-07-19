@@ -8,9 +8,18 @@ export const SESSION_COOKIE = 'wb_session';
 /**
  * Paths reachable without a token: health probe, the login flow, and the
  * editor's static shell (the SPA renders the token gate itself; all data
- * routes it calls stay protected).
+ * routes it calls stay protected). Exact-or-slash matching so e.g.
+ * /healthz or /editorx would not inherit openness.
  */
-const OPEN_PREFIXES = ['/health', '/auth/', '/editor'];
+function isOpenPath(path: string): boolean {
+  return (
+    path === '/health' ||
+    path === '/editor' ||
+    path.startsWith('/editor/') ||
+    path === '/auth' ||
+    path.startsWith('/auth/')
+  );
+}
 
 function tokenMatches(expected: string, candidate: string | undefined): boolean {
   if (!candidate) return false;
@@ -67,7 +76,7 @@ export async function registerAuth(app: FastifyInstance, apiToken: string | unde
 
   app.addHook('onRequest', async (req, reply) => {
     const path = req.url.split('?')[0]!;
-    if (OPEN_PREFIXES.some((p) => path === p.replace(/\/$/, '') || path.startsWith(p))) return;
+    if (isOpenPath(path)) return;
     const ok =
       tokenMatches(apiToken, bearerOf(req.headers.authorization)) ||
       tokenMatches(apiToken, req.headers['x-api-key'] as string | undefined) ||

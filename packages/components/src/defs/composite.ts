@@ -1,6 +1,6 @@
 import { AssetRefSchema } from '@wb/schema';
 import { z } from 'zod';
-import { escapeHtml, safeHref } from '../html.js';
+import { cssUrl, escapeHtml, safeHref } from '../html.js';
 import type { ComponentDef } from '../registry.js';
 import { CtaSchema, el, renderChildren, wbInner } from './shared.js';
 
@@ -47,12 +47,13 @@ export const hero: ComponentDef<z.infer<typeof heroProps>> = {
       imgUrl && (props.imagePosition === 'right' || props.imagePosition === 'left')
         ? `<div class="wb-hero-media"><img src="${escapeHtml(imgUrl)}" alt="${escapeHtml(props.image?.alt ?? '')}"></div>`
         : '';
-    const isBg = Boolean(imgUrl) && props.imagePosition === 'background';
+    const bgUrl = cssUrl(imgUrl);
+    const isBg = Boolean(bgUrl) && props.imagePosition === 'background';
     const cls = `wb-hero-${props.imagePosition}${isBg ? ' wb-hero-hasbg' : ''}`;
     return el('section', node, wbInner(`${copy}${media}`), {
       class: cls,
       attrs: isBg
-        ? { style: `background-image:linear-gradient(rgb(0 0 0/.5),rgb(0 0 0/.5)),url('${imgUrl}')` }
+        ? { style: `background-image:linear-gradient(rgb(0 0 0/.5),rgb(0 0 0/.5)),url('${bgUrl}')` }
         : {},
     });
   },

@@ -1,5 +1,6 @@
 import {
   BASE_CSS,
+  cssUrl,
   getComponent,
   parseProps,
   type RenderCtx,
@@ -43,6 +44,7 @@ function colorValue(token: string): string {
   return isThemeColorToken(token) ? `var(--color-${token})` : token;
 }
 
+
 function paddingValue(p: Padding): string {
   if (typeof p === 'string') return `var(--space-${p})`;
   const side = (s?: string) => (s ? `var(--space-${s})` : '0');
@@ -77,11 +79,12 @@ export function styleRules(style: Partial<Style>, resolveAsset: RenderCtx['resol
     if (typeof style.background === 'string') {
       rules.push(`background:${colorValue(style.background)}`);
     } else {
-      const url = resolveAsset(style.background.image);
+      const url = cssUrl(resolveAsset(style.background.image));
       const overlay = style.background.overlay
         ? `linear-gradient(color-mix(in srgb, ${colorValue(style.background.overlay)} 60%, transparent), color-mix(in srgb, ${colorValue(style.background.overlay)} 60%, transparent)),`
         : '';
-      rules.push(`background:${overlay}url('${url}') center/cover no-repeat`);
+      if (url) rules.push(`background:${overlay}url('${url}') center/cover no-repeat`);
+      else if (style.background.overlay) rules.push(`background:${colorValue(style.background.overlay)}`);
     }
   }
   if (style.color) rules.push(`color:${colorValue(style.color)}`);

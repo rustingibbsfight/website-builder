@@ -108,12 +108,16 @@ export class WbCore {
     for (const asset of input.assets ?? []) {
       const newAssetId = newId();
       idMap.set(asset.id, newAssetId);
+      // Namespace the on-disk path by the fresh id so a template-supplied
+      // filename can never traverse or collide (defense-in-depth: templates
+      // are trusted code, but this keeps importSite safe for untrusted input).
+      const safeName = sanitizeFilename(asset.filename);
       assetRecords.push({
         id: newAssetId,
         siteId,
-        filename: asset.filename,
+        filename: safeName,
         mime: asset.mime,
-        path: asset.filename,
+        path: `${newAssetId}-${safeName}`,
       });
     }
     const remap = <T>(value: T): T => remapAssetIds(value, idMap);
@@ -361,7 +365,7 @@ export class WbCore {
 
   addAsset(siteId: string, filename: string, mime: string, content: Uint8Array | string): Asset {
     this.getSite(siteId);
-    const safeName = filename.replace(/[^\w.-]/g, '_');
+    const safeName = sanitizeFilename(filename);
     const id = newId();
     const path = `${id}-${safeName}`;
     const dir = assetDir(this.dataDir, siteId);
@@ -513,6 +517,15 @@ export class WbCore {
 /** Rewrite links in preview so navigation stays inside the preview prefix. Never published. */
 function previewNavScript(basePath: string): string {
   return `<script>document.addEventListener('click',function(e){var a=e.target.closest('a[href^="/"]');if(!a)return;var p=a.getAttribute('href');if(p.indexOf(${JSON.stringify(basePath)})===0)return;e.preventDefault();location.href=${JSON.stringify(basePath)}+(p==='/'?'/':p)});</script>`;
+}
+
+/** Reduce a filename to a safe basename: word chars/dot/hyphen only, no dot-segments. */
+function sanitizeFilename(filename: string): string {
+  const cleaned = filename
+    .replace(/[^\w.-]/g, '_')
+    .replace(/\.{2,}/g, '.')
+    .replace(/^[.-]+/, '');
+  return cleaned || 'asset';
 }
 
 function remapAssetIds<T>(value: T, idMap: Map<string, string>): T {

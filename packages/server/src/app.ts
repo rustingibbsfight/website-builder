@@ -276,10 +276,13 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   );
 
   // ── Publish / builds / deploy ────────────────────────────────────────────
+  // No outDir over HTTP: publish always targets the managed data/dist tree.
+  // (An arbitrary outDir would let any API client delete/overwrite host paths;
+  // custom output dirs are a local-CLI capability only.)
   app.post(
     '/sites/:siteId/publish',
-    { schema: { params: SiteIdParams, body: z.object({ outDir: z.string().optional() }).strict().nullish() } },
-    async (req) => core.publishSite(req.params.siteId, req.body?.outDir),
+    { schema: { params: SiteIdParams, body: z.object({}).strict().nullish() } },
+    async (req) => core.publishSite(req.params.siteId),
   );
 
   app.get('/sites/:siteId/builds', { schema: { params: SiteIdParams } }, async (req) =>
@@ -294,18 +297,17 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
         body: z
           .object({
             adapter: z.enum(['static', 'vercel', 'netlify', 'cloudflare']),
-            targetDir: z.string().optional(),
             projectName: z.string().optional(),
           })
           .strict(),
       },
     },
     async (req) => {
-      const { deployDist, distDir } = await import('@wb/core');
+      // No targetDir over HTTP (arbitrary filesystem write); use the CLI for
+      // static copies to custom paths.
+      const { deployDist } = await import('@wb/core');
       const result = await core.publishSite(req.params.siteId);
-      void distDir;
       return deployDist(result.distPath, req.body.adapter, {
-        targetDir: req.body.targetDir,
         projectName: req.body.projectName,
       });
     },
@@ -323,9 +325,14 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     }
     const rest = ((req.params as Record<string, string>)['*'] ?? '').split('?')[0]!;
     const { createReadStream, existsSync } = await import('node:fs');
-    const { extname, join, normalize } = await import('node:path');
+    const { extname, join, normalize, resolve, sep } = await import('node:path');
     const safe = normalize(rest).replace(/^(\.\.[/\\])+/, '');
     let filePath = join(editorDist, safe);
+    // Containment: never serve anything outside the editor dist.
+    const root = resolve(editorDist);
+    if (!resolve(filePath).startsWith(root + sep) && resolve(filePath) !== root) {
+      filePath = join(editorDist, 'index.html');
+    }
     if (!safe || !existsSync(filePath) || !extname(filePath)) filePath = join(editorDist, 'index.html');
     if (!existsSync(filePath)) return reply.status(404).send({ error: 'editor build missing' });
     const mime: Record<string, string> = {
@@ -356,7 +363,13 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     if (!result) return reply.status(404).send({ error: `no page at "/${rest}"` });
     if (result.kind === 'asset') {
       const { createReadStream } = await import('node:fs');
-      return reply.type(result.mime).send(createReadStream(result.filePath));
+      // Uploaded assets (esp. SVG) must never execute script in this origin —
+      // an SVG with <script> could otherwise ride the editor session cookie.
+      return reply
+        .type(result.mime)
+        .header('content-security-policy', "default-src 'none'; style-src 'unsafe-inline'")
+        .header('x-content-type-options', 'nosniff')
+        .send(createReadStream(result.filePath));
     }
     const type = result.kind === 'html' ? 'text/html; charset=utf-8' : 'text/css; charset=utf-8';
     return reply.type(type).send(result.body);

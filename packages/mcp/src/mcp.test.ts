@@ -6,6 +6,7 @@ import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { WbCore } from '@wb/core';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildMcpServer } from './server.js';
+import { treeOutline } from './outline.js';
 
 let dataDir: string;
 let core: WbCore;
@@ -138,6 +139,59 @@ describe('MCP server', () => {
     ) as { propsSchema: { properties: Record<string, unknown> }; exampleNode: { type: string } };
     expect(hero.propsSchema.properties).toHaveProperty('headline');
     expect(hero.exampleNode.type).toBe('hero');
+  });
+
+  it('add_page validates slug and add_asset rejects missing content', async () => {
+    const site = JSON.parse(
+      textOf(await client.callTool({ name: 'create_site', arguments: { name: 'MCP Pages' } })),
+    ) as { siteId: string };
+
+    const badSlug = await client.callTool({
+      name: 'add_page',
+      arguments: { siteId: site.siteId, slug: 'Bad Slug', title: 'X' },
+    });
+    expect((badSlug as { isError?: boolean }).isError).toBe(true);
+
+    const noContent = await client.callTool({
+      name: 'add_asset',
+      arguments: { siteId: site.siteId, filename: 'x.svg' },
+    });
+    expect((noContent as { isError?: boolean }).isError).toBe(true);
+    expect(textOf(noContent)).toMatch(/url or base64/);
+
+    const ok = await client.callTool({
+      name: 'add_page',
+      arguments: { siteId: site.siteId, slug: 'pricing', title: 'Pricing', description: 'Plans' },
+    });
+    expect(textOf(ok)).toContain('pricing');
+  });
+
+  it('get_page outline is compact and reflects edits', async () => {
+    const site = JSON.parse(
+      textOf(await client.callTool({ name: 'create_site', arguments: { name: 'Outline' } })),
+    ) as { siteId: string; pages: Array<{ id: string; rootId: string }> };
+    await client.callTool({
+      name: 'edit_page',
+      arguments: {
+        siteId: site.siteId,
+        page: site.pages[0]!.id,
+        ops: [
+          {
+            op: 'insert',
+            parentId: site.pages[0]!.rootId,
+            node: { type: 'heading', props: { text: 'Special Marker Text', level: 2 } },
+          },
+        ],
+      },
+    });
+    const outline = textOf(await client.callTool({ name: 'get_page', arguments: { siteId: site.siteId, page: '' } }));
+    expect(outline).toContain('heading');
+    expect(outline).toContain('Special Marker Text');
+    // Full JSON is available on request.
+    const full = textOf(
+      await client.callTool({ name: 'get_page', arguments: { siteId: site.siteId, page: '', full: true } }),
+    );
+    expect(full).toContain('"type": "page-root"');
   });
 
   it('set_theme merges and returns the theme', async () => {

@@ -135,9 +135,20 @@ Four pages (home, services, about, contact) + shared header/footer, teal medical
 
 ```bash
 pnpm build     # typecheck + compile all packages
-pnpm test      # unit + integration tests (schema, components, renderer, core, server, mcp)
+pnpm test      # unit + integration tests (schema, components, renderer, core, server, cli, mcp, eve)
 pnpm e2e       # Playwright: real browser at desktop/tablet/mobile viewports
 ```
+
+~150 unit/integration tests plus 20 Playwright e2e specs, including dedicated adversarial/security suites per package.
+
+## Security model
+
+- **Rendering is escape-by-default.** All component text is HTML-escaped; `href`s are restricted to http(s)/mailto/tel/relative/anchor; asset URLs are stripped of CSS metacharacters before entering `url()` (no stylesheet injection); theme colors are hex-validated. `htmlEmbed` is the one documented raw-HTML escape hatch.
+- **No arbitrary filesystem access over HTTP.** Publish always targets the managed `data/dist` tree and deploy takes no client path — custom output directories are a local-CLI-only capability. Uploaded-asset filenames are sanitized and id-namespaced; preview/asset/static-serve paths are containment-checked against traversal.
+- **Uploaded assets** are served with `Content-Security-Policy: default-src 'none'` and `X-Content-Type-Options: nosniff`, so an uploaded SVG can't run script in the app origin.
+- **Auth** via `WB_API_TOKEN` (see above). Sites are isolated: a page/asset id from one site never resolves under another.
+
+The wb API has no per-user identity — it's a single shared token for a trusted team, and untrusted multi-tenant use would need per-tenant auth added first.
 
 ## Visual editor (drag & drop)
 
