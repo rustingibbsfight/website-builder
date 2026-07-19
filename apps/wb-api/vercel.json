@@ -1,9 +1,13 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "cd ../.. && pnpm -r build",
+  "buildCommand": "cd ../.. && pnpm -r build && rm -rf apps/wb-api/public/editor && cp -r packages/editor/dist apps/wb-api/public/editor",
   "outputDirectory": "public",
   "functions": {
     "api/index.ts": { "maxDuration": 60 }
   },
-  "rewrites": [{ "source": "/(.*)", "destination": "/api/index" }]
+  "rewrites": [
+    { "source": "/editor", "destination": "/editor/index.html" },
+    { "source": "/editor/(.*)", "destination": "/editor/index.html" },
+    { "source": "/(.*)", "destination": "/api/index" }
+  ]
 }
