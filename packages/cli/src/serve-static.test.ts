@@ -69,3 +69,18 @@ describe('serveStatic — traversal containment', () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe('serveStatic — does not crash on odd targets', () => {
+  it('returns 404 (not an EISDIR crash) when a resolved path is a directory', async () => {
+    // Make `weird/index.html` itself a DIRECTORY: requesting /weird/ resolves to
+    // weird/index.html, which exists but is not a regular file. Streaming it
+    // would throw EISDIR and, without an error handler, kill the whole server.
+    mkdirSync(join(dir, 'weird', 'index.html'), { recursive: true });
+    const res = await fetch(`${base}/weird/`);
+    expect(res.status).toBe(404);
+    // The server is still alive and serving after the odd request.
+    const still = await fetch(`${base}/`);
+    expect(still.status).toBe(200);
+    expect(await still.text()).toContain('home');
+  });
+});

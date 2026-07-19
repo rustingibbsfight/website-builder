@@ -4,6 +4,8 @@ import { join } from 'node:path';
 
 export type DeployAdapterName = 'static' | 'vercel' | 'netlify' | 'cloudflare';
 
+export const DEPLOY_ADAPTERS: readonly DeployAdapterName[] = ['static', 'vercel', 'netlify', 'cloudflare'];
+
 export interface DeployOptions {
   /** For 'static': target directory to copy the built site into. */
   targetDir?: string;
@@ -29,6 +31,11 @@ export interface DeployResult {
 export function deployDist(distPath: string, adapter: DeployAdapterName, opts: DeployOptions = {}): DeployResult {
   if (!existsSync(join(distPath, 'index.html'))) {
     throw new Error(`no build found at ${distPath} — publish the site first`);
+  }
+  if (!DEPLOY_ADAPTERS.includes(adapter)) {
+    // Guard against an unvalidated CLI string cast to DeployAdapterName — never
+    // silently return undefined and report a phantom success.
+    throw new Error(`unknown deploy adapter "${adapter}" — valid: ${DEPLOY_ADAPTERS.join(', ')}`);
   }
   switch (adapter) {
     case 'static': {

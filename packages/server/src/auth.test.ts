@@ -41,6 +41,20 @@ describe('token auth', () => {
     expect(wrong.statusCode).toBe(401);
   });
 
+  it('rate-limits repeated failed logins with a 429', async () => {
+    // Hammer with wrong tokens; after the failure threshold the endpoint locks.
+    let saw429 = false;
+    for (let i = 0; i < 20; i++) {
+      const res = await app.inject({ method: 'POST', url: '/auth/login', payload: { token: `wrong-${i}` } });
+      if (res.statusCode === 429) {
+        saw429 = true;
+        break;
+      }
+      expect(res.statusCode).toBe(401);
+    }
+    expect(saw429).toBe(true);
+  });
+
   it('supports the cookie login flow for browsers', async () => {
     const bad = await app.inject({ method: 'POST', url: '/auth/login', payload: { token: 'wrong' } });
     expect(bad.statusCode).toBe(401);

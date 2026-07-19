@@ -318,19 +318,31 @@ program
   .command('dev')
   .description('Start the REST API + live preview server')
   .option('-p, --port <port>', 'port', '4000')
-  .action(async (opts: { port: string }) => {
+  .option('--host <host>', 'bind address (default 127.0.0.1; use 0.0.0.0 to expose on the network)', '127.0.0.1')
+  .action(async (opts: { port: string; host: string }) => {
     const { startServer } = await import('@wb/server');
     const port = Number(opts.port);
-    await startServer({ dataDir, port, host: '0.0.0.0' });
-    console.log(`wb API listening on http://127.0.0.1:${port}`);
+    const host = opts.host;
+    const loopback = host === '127.0.0.1' || host === '::1' || host === 'localhost';
+    // Refuse to expose the full write API on a non-loopback interface without a
+    // token — otherwise anyone on the network gets unauthenticated write access.
+    if (!loopback && !process.env.WB_API_TOKEN) {
+      fail(
+        `refusing to bind ${host} without WB_API_TOKEN — that exposes the full write API to the network unauthenticated.\n` +
+          'Set WB_API_TOKEN=<secret> (e.g. `openssl rand -hex 24`) and retry, or bind 127.0.0.1.',
+      );
+    }
+    await startServer({ dataDir, port, host });
+    const shown = loopback ? '127.0.0.1' : host;
+    console.log(`wb API listening on http://${shown}:${port} (bound ${host})`);
     console.log(
       process.env.WB_API_TOKEN
         ? '  auth:     enabled (WB_API_TOKEN) — clients need Authorization: Bearer <token>'
-        : '  auth:     OPEN — set WB_API_TOKEN before exposing this beyond localhost',
+        : `  auth:     OPEN — loopback only. Set WB_API_TOKEN before using --host to expose it.`,
     );
-    console.log(`  editor:   http://127.0.0.1:${port}/editor/`);
-    console.log(`  openapi:  http://127.0.0.1:${port}/openapi.json`);
-    console.log(`  preview:  http://127.0.0.1:${port}/preview/<siteId>/`);
+    console.log(`  editor:   http://${shown}:${port}/editor/`);
+    console.log(`  openapi:  http://${shown}:${port}/openapi.json`);
+    console.log(`  preview:  http://${shown}:${port}/preview/<siteId>/`);
   });
 
 program

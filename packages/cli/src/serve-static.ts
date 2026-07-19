@@ -18,6 +18,24 @@ const MIME: Record<string, string> = {
   '.woff2': 'font/woff2',
 };
 
+/**
+ * Stream a file to the response, but never let a read-stream error (EISDIR,
+ * EACCES, or an ENOENT from a TOCTOU delete) become an uncaught exception that
+ * takes down the whole server process.
+ */
+function pipeFile(filePath: string, res: import('node:http').ServerResponse): void {
+  const stream = createReadStream(filePath);
+  stream.on('error', () => {
+    if (!res.headersSent) {
+      res.statusCode = 500;
+      res.end('internal error');
+    } else {
+      res.destroy();
+    }
+  });
+  stream.pipe(res);
+}
+
 /** Minimal static file server with clean-URL directory-index resolution. */
 export function serveStatic(rootDir: string, port: number, host = '127.0.0.1'): Promise<Server> {
   const root = resolve(rootDir);
@@ -51,14 +69,21 @@ export function serveStatic(rootDir: string, port: number, host = '127.0.0.1'): 
       res.statusCode = 404;
       if (existsSync(notFound)) {
         res.setHeader('content-type', 'text/html; charset=utf-8');
-        createReadStream(notFound).pipe(res);
+        pipeFile(notFound, res);
       } else {
         res.end('not found');
       }
       return;
     }
+    // A path that resolved to a directory (or a broken symlink) must not be
+    // streamed — that would throw EISDIR. Serve only regular files.
+    if (!statSync(filePath).isFile()) {
+      res.statusCode = 404;
+      res.end('not found');
+      return;
+    }
     res.setHeader('content-type', MIME[extname(filePath)] ?? 'application/octet-stream');
-    createReadStream(filePath).pipe(res);
+    pipeFile(filePath, res);
   });
   return new Promise((resolve, reject) => {
     server.on('error', reject);
