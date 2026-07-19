@@ -23,22 +23,36 @@ const CONTENT_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
   '.json': 'application/json',
+  '.map': 'application/json',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',
   '.webp': 'image/webp',
+  '.avif': 'image/avif',
   '.gif': 'image/gif',
   '.ico': 'image/x-icon',
   '.txt': 'text/plain; charset=utf-8',
   '.xml': 'application/xml',
+  '.webmanifest': 'application/manifest+json',
+  '.pdf': 'application/pdf',
+  '.woff': 'font/woff',
   '.woff2': 'font/woff2',
+  '.ttf': 'font/ttf',
+  '.otf': 'font/otf',
+  '.eot': 'application/vnd.ms-fontobject',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
+  '.wasm': 'application/wasm',
 };
 
 export function contentTypeFor(path: string): string {
   const dot = path.lastIndexOf('.');
-  return CONTENT_TYPES[dot >= 0 ? path.slice(dot) : ''] ?? 'application/octet-stream';
+  // Extensions are matched case-insensitively (e.g. LOGO.PNG, photo.JPG).
+  const ext = dot >= 0 ? path.slice(dot).toLowerCase() : '';
+  return CONTENT_TYPES[ext] ?? 'application/octet-stream';
 }
 
 /** Deterministic, DNS-safe project name from a site name. */
@@ -51,24 +65,60 @@ export function slugifyProject(name: string, prefix = 'wb-'): string {
     .replace(/[\s_]+/g, '-')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '')
-    .slice(0, 40);
+    .slice(0, 40)
+    // A truncating slice can re-expose a trailing hyphen ("clinic-of-…-" → strip it).
+    .replace(/-+$/, '');
   return `${prefix}${slug || 'site'}`;
 }
+
+/**
+ * Project name that is unique per site, not just per site *name*. Two sites
+ * both called "Clinic" must not deploy over each other, so a short stable
+ * discriminator derived from the (immutable) siteId is appended. Republishing
+ * the same site keeps the same name → same project → same domain.
+ */
+export function projectNameFor(siteName: string, siteId: string, prefix = 'wb-'): string {
+  const base = slugifyProject(siteName, ''); // slug only (no prefix), already bounded to 40
+  const disc = siteId.toLowerCase().replace(/[^a-z0-9]/g, '').slice(-8) || 'x';
+  const slug = base === 'site' ? disc : `${base}-${disc}`;
+  return `${prefix}${slug}`;
+}
+
+/** Parse a Response body as JSON without throwing on empty/non-JSON payloads. */
+async function readJsonSafe(res: { text(): Promise<string> }): Promise<Record<string, unknown>> {
+  const text = await res.text();
+  if (!text) return {};
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : { _raw: parsed };
+  } catch {
+    return { _raw: text };
+  }
+}
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 export interface VercelApiTargetConfig {
   token: string;
   teamId?: string;
   /** Prefix for auto-created project names (default "wb-"). */
   projectPrefix?: string;
+  /** Poll interval (ms) while waiting for a deployment to go READY. Default 2000. */
+  pollIntervalMs?: number;
+  /** Max readiness polls before returning while-still-building. Default 45 (~90s). */
+  maxPolls?: number;
   /** Injectable for tests. */
   fetchFn?: typeof fetch;
 }
 
+const VERCEL_TERMINAL_STATES = new Set(['READY', 'ERROR', 'CANCELED']);
+
 /**
  * Deploys via the Vercel Deployments API (v13) with files inlined as base64 —
  * a single POST, no CLI. The project name is derived deterministically from
- * the site name, so republishing updates the same project (and its
- * <project>.vercel.app domain / any custom domains attached to it).
+ * the site id (not just its name), so republishing updates the same project
+ * (and its <project>.vercel.app domain / any custom domains attached to it)
+ * while two same-named sites never clobber each other.
  */
 export class VercelApiTarget implements PublishTarget {
   readonly name = 'vercel-api';
@@ -78,8 +128,16 @@ export class VercelApiTarget implements PublishTarget {
     this.fetchFn = cfg.fetchFn ?? fetch;
   }
 
-  async deploy({ siteName, files }: { siteId: string; siteName: string; files: Map<string, string | Uint8Array> }) {
-    const project = slugifyProject(siteName, this.cfg.projectPrefix ?? 'wb-');
+  private get authHeaders(): Record<string, string> {
+    return { authorization: `Bearer ${this.cfg.token}` };
+  }
+
+  private get query(): string {
+    return this.cfg.teamId ? `?teamId=${encodeURIComponent(this.cfg.teamId)}` : '';
+  }
+
+  async deploy({ siteId, siteName, files }: { siteId: string; siteName: string; files: Map<string, string | Uint8Array> }) {
+    const project = projectNameFor(siteName, siteId, this.cfg.projectPrefix ?? 'wb-');
     const body = {
       name: project,
       target: 'production',
@@ -90,23 +148,54 @@ export class VercelApiTarget implements PublishTarget {
         encoding: 'base64',
       })),
     };
-    const query = this.cfg.teamId ? `?teamId=${encodeURIComponent(this.cfg.teamId)}` : '';
-    const res = await this.fetchFn(`https://api.vercel.com/v13/deployments${query}`, {
+    const res = await this.fetchFn(`https://api.vercel.com/v13/deployments${this.query}`, {
       method: 'POST',
-      headers: {
-        authorization: `Bearer ${this.cfg.token}`,
-        'content-type': 'application/json',
-      },
+      headers: { ...this.authHeaders, 'content-type': 'application/json' },
       body: JSON.stringify(body),
     });
-    const payload = (await res.json()) as { url?: string; error?: { message?: string } };
-    if (!res.ok || !payload.url) {
-      throw new Error(`vercel deploy failed (${res.status}): ${payload.error?.message ?? 'unknown error'}`);
+    const payload = await readJsonSafe(res);
+    const url = typeof payload.url === 'string' ? payload.url : undefined;
+    if (!res.ok || !url) {
+      const err = payload.error as { message?: string } | undefined;
+      const detail = err?.message ?? (typeof payload._raw === 'string' ? payload._raw.slice(0, 300) : 'unknown error');
+      throw new Error(`vercel deploy failed (${res.status}): ${detail}`);
     }
+
+    // Don't report success until Vercel finishes building — a 200 on POST only
+    // means the deployment was accepted (QUEUED/BUILDING), not that it's live.
+    const id = typeof payload.id === 'string' ? payload.id : undefined;
+    const state = await this.waitUntilReady(id, typeof payload.readyState === 'string' ? payload.readyState : undefined);
+    if (state === 'ERROR' || state === 'CANCELED') {
+      throw new Error(`vercel deployment ${state.toLowerCase()} for project "${project}" (${url})`);
+    }
+    const status = state === 'READY' ? 'live' : `still building (last state ${state})`;
     return {
       url: `https://${project}.vercel.app`,
-      detail: `deployment https://${payload.url} promoted to production on project "${project}"`,
+      detail: `deployment https://${url} ${status} on project "${project}"`,
     };
+  }
+
+  /** Poll the deployment until it reaches a terminal state or the budget runs out. */
+  private async waitUntilReady(id: string | undefined, initial: string | undefined): Promise<string> {
+    let state = initial ?? 'QUEUED';
+    if (!id || VERCEL_TERMINAL_STATES.has(state)) return state;
+    const interval = this.cfg.pollIntervalMs ?? 2000;
+    const maxPolls = this.cfg.maxPolls ?? 45;
+    for (let i = 0; i < maxPolls; i++) {
+      await sleep(interval);
+      let res: Awaited<ReturnType<typeof fetch>>;
+      try {
+        res = await this.fetchFn(`https://api.vercel.com/v13/deployments/${encodeURIComponent(id)}${this.query}`, {
+          headers: this.authHeaders,
+        });
+      } catch {
+        continue; // transient network blip — keep polling within the budget
+      }
+      const data = await readJsonSafe(res);
+      if (typeof data.readyState === 'string') state = data.readyState;
+      if (VERCEL_TERMINAL_STATES.has(state)) break;
+    }
+    return state;
   }
 }
 
@@ -145,36 +234,47 @@ export class R2PublishTarget implements PublishTarget {
   async deploy({ siteId, files }: { siteId: string; siteName: string; files: Map<string, string | Uint8Array> }) {
     const prefix = `${siteId}/`;
 
-    // Remove stale keys from the previous build first.
+    // Enumerate the previous build's keys BEFORE touching anything, so we can
+    // diff. We never delete-then-upload — that would leave the site 404ing for
+    // the whole upload window. Instead: upload the new build over the top, then
+    // delete only the keys that are no longer part of it.
+    const existing = new Set<string>();
     let token: string | undefined;
     do {
       const listed = await this.client.send(
         new ListObjectsV2Command({ Bucket: this.cfg.bucket, Prefix: prefix, ContinuationToken: token }),
       );
-      const keys = (listed.Contents ?? []).map((o) => ({ Key: o.Key! }));
-      if (keys.length > 0) {
-        await this.client.send(
-          new DeleteObjectsCommand({ Bucket: this.cfg.bucket, Delete: { Objects: keys } }),
-        );
-      }
+      for (const o of listed.Contents ?? []) if (o.Key) existing.add(o.Key);
       token = listed.IsTruncated ? listed.NextContinuationToken : undefined;
     } while (token);
 
+    const written = new Set<string>();
     for (const [path, data] of files) {
+      const key = `${prefix}${path}`;
+      written.add(key);
       await this.client.send(
         new PutObjectCommand({
           Bucket: this.cfg.bucket,
-          Key: `${prefix}${path}`,
+          Key: key,
           Body: typeof data === 'string' ? Buffer.from(data) : data,
           ContentType: contentTypeFor(path),
         }),
       );
     }
 
+    // Now that the new build is fully live, prune keys it replaced. S3/R2
+    // DeleteObjects caps at 1000 keys per call, so chunk it.
+    const stale = [...existing].filter((k) => !written.has(k)).map((Key) => ({ Key }));
+    for (let i = 0; i < stale.length; i += 1000) {
+      await this.client.send(
+        new DeleteObjectsCommand({ Bucket: this.cfg.bucket, Delete: { Objects: stale.slice(i, i + 1000) } }),
+      );
+    }
+
     const base = this.cfg.publicUrl?.replace(/\/$/, '');
     return {
       url: base ? `${base}/${siteId}/index.html` : `r2://${this.cfg.bucket}/${prefix}`,
-      detail: `${files.size} files uploaded to ${this.cfg.bucket}/${prefix}`,
+      detail: `${files.size} files uploaded to ${this.cfg.bucket}/${prefix}${stale.length ? `, ${stale.length} stale removed` : ''}`,
     };
   }
 }
