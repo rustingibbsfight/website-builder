@@ -101,9 +101,12 @@ export const footer: ComponentDef<z.infer<typeof footerProps>> = {
             .join('')}</div>`,
       )
       .join('');
-    const brand = `<div class="wb-footer-brand">${props.showLogo ? logoHtml(ctx) : ''}${
-      props.about ? `<p>${escapeHtml(props.about)}</p>` : ''
-    }</div>`;
+    // Always a text wordmark here: image logos rarely survive on dark footers.
+    const brand = `<div class="wb-footer-brand">${
+      props.showLogo
+        ? `<a class="wb-logo wb-logo-text" href="/">${escapeHtml(ctx.theme.brandName)}</a>`
+        : ''
+    }${props.about ? `<p>${escapeHtml(props.about)}</p>` : ''}</div>`;
     const legal = props.legal ? `<div class="wb-footer-legal">${escapeHtml(props.legal)}</div>` : '';
     return el('footer', node, wbInner(`<div class="wb-footer-grid">${brand}${cols}</div>${legal}`));
   },
@@ -112,7 +115,6 @@ export const footer: ComponentDef<z.infer<typeof footerProps>> = {
 .wb-footer-grid{display:grid;grid-template-columns:2fr repeat(auto-fit,minmax(140px,1fr));gap:var(--space-lg)}
 .wb-footer-brand p{color:color-mix(in srgb, #fff 70%, transparent);margin:.75rem 0 0;max-width:32ch;line-height:1.6}
 .c-footer .wb-logo-text{color:#fff}
-.c-footer .wb-logo img{filter:brightness(0) invert(1)}
 .wb-footer-col h3{font-size:.85rem;text-transform:uppercase;letter-spacing:.06em;margin:0 0 .75rem;color:color-mix(in srgb, #fff 60%, transparent)}
 .wb-footer-col a{display:block;color:#fff;text-decoration:none;padding:.2rem 0;opacity:.9}
 .wb-footer-col a:hover{opacity:1;text-decoration:underline}
