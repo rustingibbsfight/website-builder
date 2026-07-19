@@ -35,7 +35,7 @@ import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { assetDir, distDir, openDb } from './db.js';
 import { EDITOR_PREVIEW_JS } from './editor-script.js';
-import { NotFoundError, ValidationError } from './errors.js';
+import { ConflictError, NotFoundError, ValidationError } from './errors.js';
 import { createPublishTarget, type PublishTarget } from './publish-target.js';
 import { createAssetStorage, type AssetStorage } from './storage.js';
 import { createVersionControl, type VersionControl, type VersionControlResult } from './version-control.js';
@@ -194,17 +194,33 @@ export class WbCore {
         meta: p.meta ?? {},
         tree,
         sortOrder: i,
+        version: 0,
       };
     });
 
-    // Everything is validated before any write. Asset bytes first, then rows.
+    // Everything is validated before any write. Write asset blobs first, then
+    // commit all DB rows in one transactional batch. If anything fails, delete
+    // the blobs we wrote so a failed import never leaves orphaned storage or a
+    // half-built site.
     const inputAssets = input.assets ?? [];
-    for (let i = 0; i < assetRecords.length; i++) {
-      await this.storage.put(siteId, assetRecords[i]!.path, inputAssets[i]!.content, assetRecords[i]!.mime);
+    const writtenPaths: string[] = [];
+    try {
+      for (let i = 0; i < assetRecords.length; i++) {
+        await this.storage.put(siteId, assetRecords[i]!.path, inputAssets[i]!.content, assetRecords[i]!.mime);
+        writtenPaths.push(assetRecords[i]!.path);
+      }
+      await this.db.batch(
+        [
+          this.sites.insertStatement(site),
+          ...pages.map((p) => this.pages.insertStatement(p)),
+          ...assetRecords.map((a) => this.assets.insertStatement(a)),
+        ],
+        'write',
+      );
+    } catch (err) {
+      await Promise.allSettled(writtenPaths.map((p) => this.storage.delete(siteId, p)));
+      throw err;
     }
-    await this.sites.insert(site);
-    for (const page of pages) await this.pages.insert(page);
-    for (const asset of assetRecords) await this.assets.insert(asset);
     return site;
   }
 
@@ -325,9 +341,19 @@ export class WbCore {
       title,
       meta: {},
       tree: fullTree,
-      sortOrder: (await this.pages.listForSite(siteId)).length,
+      sortOrder: await this.pages.nextSortOrder(siteId),
+      version: 0,
     };
-    await this.pages.insert(page);
+    try {
+      await this.pages.insert(page);
+    } catch (err) {
+      // A concurrent add of the same slug loses the UNIQUE(site_id, slug) race —
+      // surface it as a clean validation error, not a raw DB failure.
+      if (/UNIQUE|constraint/i.test(err instanceof Error ? err.message : String(err))) {
+        throw new ValidationError(`page with slug "${cleanSlug || '(home)'}" already exists`);
+      }
+      throw err;
+    }
     await this.touchSite(siteId);
     return page;
   }
@@ -365,9 +391,18 @@ export class WbCore {
     if (patch.title !== undefined) page.title = patch.title;
     if (patch.meta) page.meta = { ...page.meta, ...patch.meta };
     if (patch.sortOrder !== undefined) page.sortOrder = patch.sortOrder;
-    await this.pages.update(page);
+    await this.savePage(page);
     await this.touchSite(siteId);
     return page;
+  }
+
+  /** Persist a page with optimistic locking; throws ConflictError on a lost race. */
+  private async savePage(page: Page): Promise<void> {
+    if (!(await this.pages.update(page))) {
+      throw new ConflictError(
+        `page "${page.id}" was modified concurrently — reload and reapply your change`,
+      );
+    }
   }
 
   async deletePage(siteId: string, pageIdOrSlug: string): Promise<void> {
@@ -388,7 +423,7 @@ export class WbCore {
     }
     this.validateTree(materialized);
     page.tree = materialized;
-    await this.pages.update(page);
+    await this.savePage(page);
     await this.touchSite(siteId);
     return page;
   }
@@ -400,7 +435,7 @@ export class WbCore {
       validateNode: validateNodeAgainstRegistry,
       isContainer,
     });
-    await this.pages.update(page);
+    await this.savePage(page);
     await this.touchSite(siteId);
     return page;
   }
@@ -649,11 +684,9 @@ export class WbCore {
   }
 
   private async touchSite(siteId: string): Promise<void> {
-    const site = await this.sites.get(siteId);
-    if (site) {
-      site.updatedAt = nowIso();
-      await this.sites.update(site);
-    }
+    // Scoped updated_at bump — a full-row rewrite here would clobber a
+    // concurrent theme/header/footer/settings edit.
+    await this.sites.touch(siteId, nowIso());
   }
 }
 

@@ -1,4 +1,4 @@
-import type { Client, Row } from '@libsql/client';
+import type { Client, InStatement, Row } from '@libsql/client';
 import type { Asset, Page, PageMeta, Site, SiteSettings, Theme, WbNode } from '@wb/schema';
 
 const str = (v: unknown): string => String(v);
@@ -23,6 +23,7 @@ const pageFromRow = (r: Row): Page => ({
   meta: JSON.parse(str(r.meta_json)) as PageMeta,
   tree: JSON.parse(str(r.tree_json)) as WbNode,
   sortOrder: Number(r.sort_order),
+  version: Number(r.version ?? 0),
 });
 
 const assetFromRow = (r: Row): Asset => ({
@@ -38,8 +39,8 @@ const assetFromRow = (r: Row): Asset => ({
 export class SiteStore {
   constructor(private db: Client) {}
 
-  async insert(site: Site): Promise<void> {
-    await this.db.execute({
+  insertStatement(site: Site): InStatement {
+    return {
       sql: `INSERT INTO sites (id, name, theme_json, header_json, footer_json, settings_json, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
@@ -52,7 +53,16 @@ export class SiteStore {
         site.createdAt,
         site.updatedAt,
       ],
-    });
+    };
+  }
+
+  async insert(site: Site): Promise<void> {
+    await this.db.execute(this.insertStatement(site));
+  }
+
+  /** Scoped bump of updated_at only — never clobbers concurrent theme/chrome edits. */
+  async touch(id: string, updatedAt: string): Promise<void> {
+    await this.db.execute({ sql: 'UPDATE sites SET updated_at=? WHERE id=?', args: [updatedAt, id] });
   }
 
   async update(site: Site): Promise<void> {
@@ -89,9 +99,9 @@ export class SiteStore {
 export class PageStore {
   constructor(private db: Client) {}
 
-  async insert(page: Page): Promise<void> {
-    await this.db.execute({
-      sql: `INSERT INTO pages (id, site_id, slug, title, meta_json, tree_json, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+  insertStatement(page: Page): InStatement {
+    return {
+      sql: `INSERT INTO pages (id, site_id, slug, title, meta_json, tree_json, sort_order, version) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
         page.id,
         page.siteId,
@@ -100,15 +110,48 @@ export class PageStore {
         JSON.stringify(page.meta),
         JSON.stringify(page.tree),
         page.sortOrder,
+        page.version ?? 0,
       ],
-    });
+    };
   }
 
-  async update(page: Page): Promise<void> {
-    await this.db.execute({
-      sql: `UPDATE pages SET slug=?, title=?, meta_json=?, tree_json=?, sort_order=? WHERE id=?`,
-      args: [page.slug, page.title, JSON.stringify(page.meta), JSON.stringify(page.tree), page.sortOrder, page.id],
+  async insert(page: Page): Promise<void> {
+    await this.db.execute(this.insertStatement(page));
+  }
+
+  /**
+   * Optimistic-locked update: succeeds only if the row's version still matches
+   * the version we read. Returns false on a lost race (caller throws Conflict),
+   * so concurrent editors can never silently overwrite each other. On success
+   * the in-memory page's version is bumped to match the row.
+   */
+  async update(page: Page): Promise<boolean> {
+    const res = await this.db.execute({
+      sql: `UPDATE pages SET slug=?, title=?, meta_json=?, tree_json=?, sort_order=?, version=version+1
+            WHERE id=? AND version=?`,
+      args: [
+        page.slug,
+        page.title,
+        JSON.stringify(page.meta),
+        JSON.stringify(page.tree),
+        page.sortOrder,
+        page.id,
+        page.version ?? 0,
+      ],
     });
+    if (res.rowsAffected > 0) {
+      page.version = (page.version ?? 0) + 1;
+      return true;
+    }
+    return false;
+  }
+
+  /** Next sort order for a site's pages, computed in SQL to avoid a read-then-count race. */
+  async nextSortOrder(siteId: string): Promise<number> {
+    const rows = (
+      await this.db.execute({ sql: 'SELECT COALESCE(MAX(sort_order), -1) + 1 AS n FROM pages WHERE site_id=?', args: [siteId] })
+    ).rows;
+    return Number(rows[0]?.n ?? 0);
   }
 
   async get(id: string): Promise<Page | null> {
@@ -139,11 +182,15 @@ export class PageStore {
 export class AssetStore {
   constructor(private db: Client) {}
 
-  async insert(asset: Asset): Promise<void> {
-    await this.db.execute({
+  insertStatement(asset: Asset): InStatement {
+    return {
       sql: `INSERT INTO assets (id, site_id, filename, mime, width, height, path) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       args: [asset.id, asset.siteId, asset.filename, asset.mime, asset.width ?? null, asset.height ?? null, asset.path],
-    });
+    };
+  }
+
+  async insert(asset: Asset): Promise<void> {
+    await this.db.execute(this.insertStatement(asset));
   }
 
   async get(id: string): Promise<Asset | null> {

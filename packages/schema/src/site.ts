@@ -26,6 +26,8 @@ export const PageSchema = z
     meta: PageMetaSchema.default({}),
     tree: NodeSchema.describe('Component tree rooted at a page-root node'),
     sortOrder: z.number().int().default(0),
+    /** Optimistic-lock counter; DB-managed, bumped on every persisted edit. */
+    version: z.number().int().optional(),
   })
   .strict();
 export type Page = z.infer<typeof PageSchema>;

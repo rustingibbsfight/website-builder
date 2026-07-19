@@ -11,42 +11,51 @@ export interface DbOptions {
   dbToken?: string;
 }
 
-const MIGRATIONS: string[] = [
-  `CREATE TABLE sites (
-    id TEXT PRIMARY KEY,
-    name TEXT NOT NULL,
-    theme_json TEXT NOT NULL,
-    header_json TEXT,
-    footer_json TEXT,
-    settings_json TEXT NOT NULL DEFAULT '{}',
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-  );
-  CREATE TABLE pages (
-    id TEXT PRIMARY KEY,
-    site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
-    slug TEXT NOT NULL,
-    title TEXT NOT NULL,
-    meta_json TEXT NOT NULL DEFAULT '{}',
-    tree_json TEXT NOT NULL,
-    sort_order INTEGER NOT NULL DEFAULT 0,
-    UNIQUE (site_id, slug)
-  );
-  CREATE TABLE assets (
-    id TEXT PRIMARY KEY,
-    site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
-    filename TEXT NOT NULL,
-    mime TEXT NOT NULL,
-    width INTEGER,
-    height INTEGER,
-    path TEXT NOT NULL
-  );
-  CREATE TABLE builds (
-    id TEXT PRIMARY KEY,
-    site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
-    created_at TEXT NOT NULL,
-    manifest_json TEXT NOT NULL
-  );`,
+/**
+ * Migrations as arrays of individual statements. Each migration (with its
+ * version bump) is applied in one transactional libSQL batch, and every DDL
+ * statement uses IF NOT EXISTS / additive ALTERs so that concurrent serverless
+ * cold starts running the same migration can't corrupt each other (idempotent).
+ */
+const MIGRATIONS: string[][] = [
+  [
+    `CREATE TABLE IF NOT EXISTS sites (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      theme_json TEXT NOT NULL,
+      header_json TEXT,
+      footer_json TEXT,
+      settings_json TEXT NOT NULL DEFAULT '{}',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS pages (
+      id TEXT PRIMARY KEY,
+      site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+      slug TEXT NOT NULL,
+      title TEXT NOT NULL,
+      meta_json TEXT NOT NULL DEFAULT '{}',
+      tree_json TEXT NOT NULL,
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      version INTEGER NOT NULL DEFAULT 0,
+      UNIQUE (site_id, slug)
+    )`,
+    `CREATE TABLE IF NOT EXISTS assets (
+      id TEXT PRIMARY KEY,
+      site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+      filename TEXT NOT NULL,
+      mime TEXT NOT NULL,
+      width INTEGER,
+      height INTEGER,
+      path TEXT NOT NULL
+    )`,
+    `CREATE TABLE IF NOT EXISTS builds (
+      id TEXT PRIMARY KEY,
+      site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL,
+      manifest_json TEXT NOT NULL
+    )`,
+  ],
 ];
 
 /**
@@ -81,27 +90,46 @@ export async function openDb(opts: DbOptions): Promise<Client> {
   }
 
   await client.execute('CREATE TABLE IF NOT EXISTS _wb_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
-  let version = Number(
+  const version = Number(
     (await client.execute({ sql: 'SELECT value FROM _wb_meta WHERE key = ?', args: ['schema_version'] }))
       .rows[0]?.value ?? 0,
   );
-  // Compatibility: a local DB migrated by the older PRAGMA-based scheme has the
-  // tables but no _wb_meta row — treat it as fully migrated so we don't re-run.
-  if (version === 0) {
-    const hasSites = (
-      await client.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='sites'")
-    ).rows.length > 0;
-    if (hasSites) version = MIGRATIONS.length;
-  }
+  // Apply each pending migration + its version bump in a single transactional
+  // batch — all-or-nothing, so a crash mid-migration can't leave a
+  // half-migrated schema that reports itself complete. IF NOT EXISTS DDL makes
+  // concurrent cold starts running the same migration harmless.
   for (let v = version; v < MIGRATIONS.length; v++) {
-    await client.executeMultiple(MIGRATIONS[v]!);
+    await client.batch(
+      [
+        ...MIGRATIONS[v]!.map((sql) => ({ sql, args: [] as never[] })),
+        {
+          sql: `INSERT INTO _wb_meta (key, value) VALUES ('schema_version', ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+          args: [String(v + 1)],
+        },
+      ],
+      'write',
+    );
   }
-  await client.execute({
-    sql: `INSERT INTO _wb_meta (key, value) VALUES ('schema_version', ?)
-          ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-    args: [String(MIGRATIONS.length)],
-  });
+
+  // Additive columns, ensured idempotently every startup. This covers databases
+  // created by an earlier migration (already at the latest schema_version, so
+  // the loop above is a no-op) that predate a column — e.g. pages.version, which
+  // fresh CREATE TABLEs above already include.
+  await ensureColumn(client, 'pages', 'version', 'INTEGER NOT NULL DEFAULT 0');
   return client;
+}
+
+/** Add a column if it isn't already present. Idempotent and race-tolerant. */
+async function ensureColumn(client: Client, table: string, column: string, def: string): Promise<void> {
+  const info = await client.execute(`PRAGMA table_info(${table})`);
+  if (info.rows.some((r) => r.name === column)) return;
+  try {
+    await client.execute(`ALTER TABLE ${table} ADD COLUMN ${column} ${def}`);
+  } catch (err) {
+    // A concurrent startup may have added it first — that's fine.
+    if (!/duplicate column/i.test(err instanceof Error ? err.message : String(err))) throw err;
+  }
 }
 
 export function assetDir(dataDir: string, siteId: string): string {

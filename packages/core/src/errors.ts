@@ -14,3 +14,11 @@ export class ValidationError extends Error {
     this.name = 'ValidationError';
   }
 }
+
+/** Thrown when an optimistic-locked write loses a concurrent race — retry. */
+export class ConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'ConflictError';
+  }
+}
