@@ -138,6 +138,8 @@ A typical agent session: `create_site {template: "breakthrough-medical", brand: 
 
 **Local CLI adapters** (when you want files or provider CLIs): `wb build` writes `data/dist/<siteId>`, and `wb deploy --adapter static|vercel|netlify|cloudflare` copies it or runs the provider CLI.
 
+**Version control:** set `WB_VCS=github` + `WB_GITHUB_TOKEN` + `WB_GITHUB_OWNER` and every deploy also commits the site's source (`site.json`) and rendered `dist/` to a per-site repo (`wb-site-<name>`). Republishes stack up as commit history — diffable and restorable. `POST /sites/:id/commit` (or Eve's `commit_site`) makes a snapshot without deploying. Commits use the GitHub API (no git binary), so it works from serverless; a commit failure never blocks a live deploy.
+
 Contact forms on static hosting need a form endpoint: set the form's `action` prop (e.g. Formspree) or `netlifyForms: true` on Netlify.
 
 ## The Breakthrough Medical template

@@ -38,6 +38,7 @@ import { EDITOR_PREVIEW_JS } from './editor-script.js';
 import { NotFoundError, ValidationError } from './errors.js';
 import { createPublishTarget, type PublishTarget } from './publish-target.js';
 import { createAssetStorage, type AssetStorage } from './storage.js';
+import { createVersionControl, type VersionControl, type VersionControlResult } from './version-control.js';
 import { AssetStore, BuildStore, PageStore, SiteStore, type BuildRecord } from './stores.js';
 
 export interface TemplateInfo {
@@ -70,6 +71,8 @@ export interface WbCoreOptions {
   assetStorage?: AssetStorage;
   /** API-based live-deploy destination. Defaults to env selection (WB_PUBLISH_TARGET). */
   publishTarget?: PublishTarget | null;
+  /** Version control for published sites. Defaults to env selection (WB_VCS). */
+  versionControl?: VersionControl | null;
 }
 
 export interface DeploySiteResult {
@@ -79,6 +82,10 @@ export interface DeploySiteResult {
   detail?: string;
   pageCount: number;
   warnings: Array<{ page: string; message: string }>;
+  /** Set when version control committed this deploy. */
+  versionControl?: VersionControlResult;
+  /** Set when version control was configured but the commit failed (non-fatal). */
+  versionControlError?: string;
 }
 
 export class WbCore {
@@ -92,6 +99,7 @@ export class WbCore {
     private db: Client,
     private storage: AssetStorage,
     private publishTarget: PublishTarget | null,
+    private versionControl: VersionControl | null,
     dataDir: string,
   ) {
     this.dataDir = dataDir;
@@ -106,11 +114,16 @@ export class WbCore {
     const db = await openDb({ dataDir: opts.dataDir, dbUrl: opts.dbUrl, dbToken: opts.dbToken });
     const storage = opts.assetStorage ?? createAssetStorage(opts.dataDir);
     const publishTarget = opts.publishTarget !== undefined ? opts.publishTarget : createPublishTarget();
-    return new WbCore(db, storage, publishTarget, opts.dataDir);
+    const versionControl = opts.versionControl !== undefined ? opts.versionControl : createVersionControl();
+    return new WbCore(db, storage, publishTarget, versionControl, opts.dataDir);
   }
 
   hasPublishTarget(): boolean {
     return this.publishTarget !== null;
+  }
+
+  hasVersionControl(): boolean {
+    return this.versionControl !== null;
   }
 
   close(): void {
@@ -474,9 +487,40 @@ export class WbCore {
     return { buildId: build.id, distPath: out, pageCount: pages.length, files: written, warnings };
   }
 
+  /** Full, restorable source export of a site: site record + all pages. */
+  async exportSite(siteId: string): Promise<{ site: Site; pages: Page[] }> {
+    const site = await this.getSite(siteId);
+    const pages = await this.pages.listForSite(siteId);
+    return { site, pages };
+  }
+
+  /**
+   * Commit a site's source + rendered build to version control (a per-site
+   * GitHub repo). Republishes stack up as commit history. Returns the repo and
+   * commit info.
+   */
+  async commitSiteToVcs(siteId: string, message?: string): Promise<VersionControlResult> {
+    if (!this.versionControl) {
+      throw new ValidationError(
+        'no version control configured — set WB_VCS=github (with WB_GITHUB_TOKEN and WB_GITHUB_OWNER)',
+      );
+    }
+    const site = await this.getSite(siteId);
+    const { pages, files } = await this.renderFullSite(siteId);
+    return this.versionControl.commitSite({
+      siteId,
+      siteName: site.name,
+      source: { site, pages },
+      files,
+      message: message ?? `Publish ${site.name} — ${nowIso()}`,
+    });
+  }
+
   /**
    * Render in memory and push straight to the configured live target
    * (Vercel API / R2). The fully-serverless deploy path: no CLI, no disk.
+   * When version control is configured, also commits the source + build to the
+   * site's repo (non-fatal if that fails — the live deploy still succeeds).
    */
   async deploySite(siteId: string): Promise<DeploySiteResult> {
     if (!this.publishTarget) {
@@ -487,6 +531,24 @@ export class WbCore {
     const site = await this.getSite(siteId);
     const { pages, files, warnings } = await this.renderFullSite(siteId);
     const result = await this.publishTarget.deploy({ siteId, siteName: site.name, files });
+
+    // Version control: commit this published snapshot. Best-effort — a VCS
+    // hiccup must not fail a successful live deploy.
+    let vcs: VersionControlResult | undefined;
+    let vcsError: string | undefined;
+    if (this.versionControl) {
+      try {
+        vcs = await this.versionControl.commitSite({
+          siteId,
+          siteName: site.name,
+          source: { site, pages },
+          files,
+          message: `Deploy ${site.name} → ${result.url} — ${nowIso()}`,
+        });
+      } catch (err) {
+        vcsError = err instanceof Error ? err.message : String(err);
+      }
+    }
 
     const build: BuildRecord = {
       id: newId(),
@@ -507,6 +569,8 @@ export class WbCore {
       ...(result.detail ? { detail: result.detail } : {}),
       pageCount: pages.length,
       warnings,
+      ...(vcs ? { versionControl: vcs } : {}),
+      ...(vcsError ? { versionControlError: vcsError } : {}),
     };
   }
 

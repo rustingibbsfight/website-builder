@@ -289,6 +289,13 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     core.listBuilds(req.params.siteId),
   );
 
+  // Commit the site's source + build to version control (per-site repo).
+  app.post(
+    '/sites/:siteId/commit',
+    { schema: { params: SiteIdParams, body: z.object({ message: z.string().optional() }).strict().nullish() } },
+    async (req) => core.commitSiteToVcs(req.params.siteId, req.body?.message),
+  );
+
   app.post(
     '/sites/:siteId/deploy',
     {
