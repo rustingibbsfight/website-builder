@@ -287,14 +287,20 @@ program
 
 program
   .command('deploy')
-  .description('Publish and deploy a site via an adapter')
+  .description(
+    'Deploy a site: without --adapter uses the WB_PUBLISH_TARGET live target (Vercel API / R2) and prints the public URL; with --adapter runs the local CLI adapters',
+  )
   .argument('<siteId>')
-  .requiredOption('-a, --adapter <adapter>', 'static | vercel | netlify | cloudflare')
+  .option('-a, --adapter <adapter>', 'static | vercel | netlify | cloudflare (omit for the live target)')
   .option('--target-dir <dir>', 'static adapter: copy build here')
   .option('--project-name <name>', 'provider project name')
-  .action(async (siteId: string, opts: { adapter: string; targetDir?: string; projectName?: string }) => {
+  .action(async (siteId: string, opts: { adapter?: string; targetDir?: string; projectName?: string }) => {
     const c = await core();
     try {
+      if (!opts.adapter) {
+        out(await c.deploySite(siteId));
+        return;
+      }
       const result = await c.publishSite(siteId);
       const deployed = deployDist(result.distPath, opts.adapter as DeployAdapterName, {
         targetDir: opts.targetDir,

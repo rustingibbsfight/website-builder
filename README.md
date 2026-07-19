@@ -129,10 +129,12 @@ A typical agent session: `create_site {template: "breakthrough-medical", brand: 
 
 ## Deploying
 
-`wb build` output (`data/dist/<siteId>`) is a complete static site. `wb deploy` wraps it:
+**Live targets (fully serverless, no CLI needed):** configure `WB_PUBLISH_TARGET` and `wb deploy <siteId>` / `POST /sites/:id/deploy` / Eve's `deploy_site` renders the site in memory and pushes it live via provider HTTP APIs, returning the public URL:
 
-- `--adapter static --target-dir /var/www/site` — copy the build
-- `--adapter vercel|netlify|cloudflare` — writes provider config into dist and runs the provider CLI if installed, otherwise prints the exact command
+- `WB_PUBLISH_TARGET=vercel` + `WB_VERCEL_TOKEN` — Vercel Deployments API; each site becomes a `wb-<name>` project, republish updates it in place
+- `WB_PUBLISH_TARGET=r2` + `WB_PUBLISH_S3_BUCKET` (+ `WB_S3_*` creds, `WB_PUBLISH_PUBLIC_URL`) — upload to a public R2/S3 bucket
+
+**Local CLI adapters** (when you want files or provider CLIs): `wb build` writes `data/dist/<siteId>`, and `wb deploy --adapter static|vercel|netlify|cloudflare` copies it or runs the provider CLI.
 
 Contact forms on static hosting need a form endpoint: set the form's `action` prop (e.g. Formspree) or `netlifyForms: true` on Netlify.
 

@@ -31,11 +31,12 @@ import {
 } from '@wb/schema';
 import { buildBreakthroughMedical, TEMPLATE_META, type BrandOverrides } from '@wb/template-breakthrough-medical';
 import type { Client } from '@libsql/client';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { assetDir, distDir, openDb } from './db.js';
 import { EDITOR_PREVIEW_JS } from './editor-script.js';
 import { NotFoundError, ValidationError } from './errors.js';
+import { createPublishTarget, type PublishTarget } from './publish-target.js';
 import { createAssetStorage, type AssetStorage } from './storage.js';
 import { AssetStore, BuildStore, PageStore, SiteStore, type BuildRecord } from './stores.js';
 
@@ -67,6 +68,17 @@ export interface WbCoreOptions {
   dbToken?: string;
   /** Asset storage. Defaults to env selection (local fs, or S3/R2 via WB_ASSET_STORE=s3). */
   assetStorage?: AssetStorage;
+  /** API-based live-deploy destination. Defaults to env selection (WB_PUBLISH_TARGET). */
+  publishTarget?: PublishTarget | null;
+}
+
+export interface DeploySiteResult {
+  buildId: string;
+  target: string;
+  url: string;
+  detail?: string;
+  pageCount: number;
+  warnings: Array<{ page: string; message: string }>;
 }
 
 export class WbCore {
@@ -79,6 +91,7 @@ export class WbCore {
   private constructor(
     private db: Client,
     private storage: AssetStorage,
+    private publishTarget: PublishTarget | null,
     dataDir: string,
   ) {
     this.dataDir = dataDir;
@@ -92,7 +105,12 @@ export class WbCore {
   static async create(opts: WbCoreOptions): Promise<WbCore> {
     const db = await openDb({ dataDir: opts.dataDir, dbUrl: opts.dbUrl, dbToken: opts.dbToken });
     const storage = opts.assetStorage ?? createAssetStorage(opts.dataDir);
-    return new WbCore(db, storage, opts.dataDir);
+    const publishTarget = opts.publishTarget !== undefined ? opts.publishTarget : createPublishTarget();
+    return new WbCore(db, storage, publishTarget, opts.dataDir);
+  }
+
+  hasPublishTarget(): boolean {
+    return this.publishTarget !== null;
   }
 
   close(): void {
@@ -418,24 +436,33 @@ export class WbCore {
     return this.publishSiteTo(siteId, outDir ?? distDir(this.dataDir, siteId));
   }
 
-  private async publishSiteTo(siteId: string, out: string): Promise<PublishResult> {
+  /**
+   * Render the complete deployable site fully in memory: pages/css/meta from
+   * the renderer plus asset bytes from storage. No filesystem involved —
+   * callers write to disk (publish) or push to a live target (deploy).
+   */
+  private async renderFullSite(siteId: string): Promise<{
+    pages: Page[];
+    files: Map<string, string | Uint8Array>;
+    warnings: Array<{ page: string; message: string }>;
+  }> {
     const site = await this.getSite(siteId);
     const pages = await this.pages.listForSite(siteId);
     if (pages.length === 0) throw new ValidationError('site has no pages to publish');
     const assets = await this.assets.listForSite(siteId);
 
     const { files, warnings } = renderSite(site, pages, assets);
+    const all = new Map<string, string | Uint8Array>(files);
+    for (const asset of assets) {
+      all.set(`assets/${asset.path}`, await this.storage.get(siteId, asset.path));
+    }
+    return { pages, files: all, warnings };
+  }
+
+  private async publishSiteTo(siteId: string, out: string): Promise<PublishResult> {
+    const { pages, files, warnings } = await this.renderFullSite(siteId);
     rmSync(out, { recursive: true, force: true });
     const written = await writeDist(files, out);
-
-    if (assets.length > 0) {
-      mkdirSync(join(out, 'assets'), { recursive: true });
-      for (const asset of assets) {
-        const bytes = await this.storage.get(siteId, asset.path);
-        writeFileSync(join(out, 'assets', asset.path), bytes);
-        written.push(`assets/${asset.path}`);
-      }
-    }
 
     const build: BuildRecord = {
       id: newId(),
@@ -445,6 +472,42 @@ export class WbCore {
     };
     await this.builds.insert(build);
     return { buildId: build.id, distPath: out, pageCount: pages.length, files: written, warnings };
+  }
+
+  /**
+   * Render in memory and push straight to the configured live target
+   * (Vercel API / R2). The fully-serverless deploy path: no CLI, no disk.
+   */
+  async deploySite(siteId: string): Promise<DeploySiteResult> {
+    if (!this.publishTarget) {
+      throw new ValidationError(
+        'no publish target configured — set WB_PUBLISH_TARGET=vercel (with WB_VERCEL_TOKEN) or =r2 (with WB_PUBLISH_S3_BUCKET), or use the CLI deploy adapters',
+      );
+    }
+    const site = await this.getSite(siteId);
+    const { pages, files, warnings } = await this.renderFullSite(siteId);
+    const result = await this.publishTarget.deploy({ siteId, siteName: site.name, files });
+
+    const build: BuildRecord = {
+      id: newId(),
+      siteId,
+      createdAt: nowIso(),
+      manifest: {
+        pages: pages.map((p) => p.slug || '(home)'),
+        files: [...files.keys()],
+        warnings,
+        distPath: result.url,
+      },
+    };
+    await this.builds.insert(build);
+    return {
+      buildId: build.id,
+      target: this.publishTarget.name,
+      url: result.url,
+      ...(result.detail ? { detail: result.detail } : {}),
+      pageCount: pages.length,
+      warnings,
+    };
   }
 
   async listBuilds(siteId: string): Promise<BuildRecord[]> {

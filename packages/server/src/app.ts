@@ -296,15 +296,21 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
         params: SiteIdParams,
         body: z
           .object({
-            adapter: z.enum(['static', 'vercel', 'netlify', 'cloudflare']),
+            adapter: z.enum(['static', 'vercel', 'netlify', 'cloudflare']).optional(),
             projectName: z.string().optional(),
           })
-          .strict(),
+          .strict()
+          .nullish(),
       },
     },
     async (req) => {
-      // No targetDir over HTTP (arbitrary filesystem write); use the CLI for
-      // static copies to custom paths.
+      // Without an adapter: the fully-serverless path — render in memory and
+      // push to the configured publish target (Vercel API / R2). With an
+      // adapter: legacy local-CLI adapters (no targetDir over HTTP — arbitrary
+      // filesystem writes stay a local-CLI capability).
+      if (!req.body?.adapter) {
+        return core.deploySite(req.params.siteId);
+      }
       const { deployDist } = await import('@wb/core');
       const result = await core.publishSite(req.params.siteId);
       return deployDist(result.distPath, req.body.adapter, {

@@ -77,6 +77,45 @@ describe('publish/deploy cannot touch arbitrary filesystem paths', () => {
     expect(res.statusCode).toBe(200);
     expect((res.json() as { status: string }).status).toBe('prepared');
   });
+
+  it('adapterless deploy without a configured target errors helpfully (422)', async () => {
+    const siteId = await makeSite();
+    const res = await app.inject({ method: 'POST', url: `/sites/${siteId}/deploy` });
+    expect(res.statusCode).toBe(422);
+    expect((res.json() as { error: string }).error).toContain('WB_PUBLISH_TARGET');
+  });
+
+  it('adapterless deploy with a configured target goes live and returns the URL', async () => {
+    const { WbCore } = await import('@wb/core');
+    const dir = mkdtempSync(join(tmpdir(), 'wb-live-'));
+    const fakeCore = await WbCore.create({
+      dataDir: dir,
+      publishTarget: {
+        name: 'fake',
+        deploy: async ({ files }) => ({ url: 'https://clinic.example.com', detail: `${files.size} files` }),
+      },
+    });
+    const liveApp = await buildApp({ core: fakeCore, openapi: false });
+    try {
+      const created = (
+        await liveApp.inject({
+          method: 'POST',
+          url: '/sites/from-template',
+          payload: { template: 'breakthrough-medical' },
+        })
+      ).json() as { site: { id: string } };
+      const res = await liveApp.inject({ method: 'POST', url: `/sites/${created.site.id}/deploy` });
+      expect(res.statusCode).toBe(200);
+      const body = res.json() as { url: string; target: string; pageCount: number };
+      expect(body.url).toBe('https://clinic.example.com');
+      expect(body.target).toBe('fake');
+      expect(body.pageCount).toBe(4);
+    } finally {
+      await liveApp.close();
+      fakeCore.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('preview path traversal + asset containment', () => {

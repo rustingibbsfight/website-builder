@@ -41,16 +41,32 @@ vercel deploy --prod
 - **API**: `https://<deployment>/sites` with `Authorization: Bearer $WB_API_TOKEN`
 - **Point Eve's** `WB_API_URL` at `https://<deployment>` and give it the same `WB_API_TOKEN`.
 
-## What works serverless — and the one gap
+## Fully serverless — including going live
 
-Fully serverless: creating sites, editing pages, theming, uploading assets, live preview, and rendering the static build. Site data (Turso) and assets (R2) persist across cold starts.
+Everything runs in the function: creating sites, editing, theming, assets, live preview, **and deploying finished sites to their public URL**. `POST /sites/:id/deploy` (no body) renders the complete site *in memory* — pages, CSS, and asset bytes pulled from R2 — and pushes it to the configured **publish target** via provider HTTP APIs. No CLI, no disk.
 
-**Publishing the final static sites still needs a destination.** `publish_site` renders the build into the function's `/tmp`, which is discarded after the request. The deploy adapters (`vercel`/`netlify`/`cloudflare`) shell out to provider CLIs that aren't present in the function, so from serverless they return instructions rather than deploying. Two clean ways to close this:
+Pick a target:
 
-1. Run `wb build <id>` + `wb deploy <id>` from the **CLI** (or CI) against the same Turso/R2 backend — the CLI has the provider CLIs and a real filesystem.
-2. (Future) Have `publish_site` write the rendered build to an R2 bucket bound to a public domain / Cloudflare Pages, so the API deploys sites end-to-end with no CLI. This is the natural next increment.
+```bash
+# Option A (recommended): Vercel Deployments API — one POST, instant live URL
+vercel env add WB_PUBLISH_TARGET         # vercel
+vercel env add WB_VERCEL_TOKEN           # a Vercel API token
+# optional: WB_VERCEL_TEAM_ID, WB_VERCEL_PROJECT_PREFIX (default "wb-")
 
-Until then: the builder + editor + preview are fully hosted here; the *last-mile publish* of a finished site to its public URL runs from the CLI.
+# Option B: upload builds to a public R2 bucket (you already have wrangler)
+#   wrangler r2 bucket create wb-sites   — then connect a public/custom domain to it
+vercel env add WB_PUBLISH_TARGET         # r2
+vercel env add WB_PUBLISH_S3_BUCKET      # wb-sites (reuses the WB_S3_* credentials)
+vercel env add WB_PUBLISH_PUBLIC_URL     # https://sites.yourdomain.com (for reported URLs)
+```
+
+With the **vercel** target, each site becomes a Vercel project named from the site name (`wb-breakthrough-medical`), republishes update the same project, and the returned URL is `https://<project>.vercel.app` — attach a custom domain to that project in Vercel and it just works, clean URLs included.
+
+With the **r2** target, builds land under `<bucket>/<siteId>/…` behind your R2 domain. Note R2 serves exact keys — add a Cloudflare transform rule mapping `/x/` → `/x/index.html` for clean directory URLs.
+
+So the northstar is now literally serverless end-to-end: Eve's `deploy_site` (or `wb deploy <siteId>`, or `POST /deploy`) returns a **live public URL**.
+
+`publish_site` (render-only, no deploy) still writes to `/tmp` on serverless — it's transient by design; use `deploy` for anything meant to persist.
 
 ## Local check
 

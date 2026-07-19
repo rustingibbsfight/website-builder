@@ -198,9 +198,8 @@ export function buildTools(wb: WbClient, config: EveConfig) {
 
     betaTool({
       name: 'deploy_site',
-      description: `Publish AND deploy a site via the configured adapter${
-        config.deployAdapter ? ` (${config.deployAdapter})` : ''
-      }. Only call when the user explicitly asks to deploy/go live.`,
+      description:
+        'Deploy a site LIVE to the internet and return its public URL (renders the latest content and pushes it to the configured hosting target). Only call when the user explicitly asks to deploy / go live / ship it. Report the returned url to the user.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -208,17 +207,17 @@ export function buildTools(wb: WbClient, config: EveConfig) {
           adapter: {
             type: 'string',
             enum: ['static', 'vercel', 'netlify', 'cloudflare'],
-            description: 'Defaults to the server-configured adapter',
+            description:
+              'Leave unset (recommended) to use the server-configured live target. Only set to force a specific legacy CLI adapter.',
           },
         },
         required: ['siteId'],
         additionalProperties: false,
       },
-      run: run(async (input: { siteId: string; adapter?: string }) =>
-        wb.post(`/sites/${input.siteId}/deploy`, {
-          adapter: input.adapter ?? config.deployAdapter ?? 'static',
-        }),
-      ),
+      run: run(async (input: { siteId: string; adapter?: string }) => {
+        const adapter = input.adapter ?? config.deployAdapter;
+        return wb.post(`/sites/${input.siteId}/deploy`, adapter ? { adapter } : {});
+      }),
     }),
   ];
 }
