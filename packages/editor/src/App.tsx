@@ -10,6 +10,14 @@ function siteIdFromPath(): string | null {
 
 export function App() {
   const [siteId, setSiteId] = useState<string | null>(siteIdFromPath());
+  const [authed, setAuthed] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    api
+      .authMe()
+      .then((me) => setAuthed(me.authenticated))
+      .catch(() => setAuthed(true)); // older server without /auth — assume open
+  }, []);
 
   useEffect(() => {
     const onPop = () => setSiteId(siteIdFromPath());
@@ -22,8 +30,46 @@ export function App() {
     setSiteId(id);
   };
 
+  if (authed === null) return <div className="loading">loading…</div>;
+  if (!authed) return <TokenGate onAuthed={() => setAuthed(true)} />;
   if (siteId) return <Editor siteId={siteId} onExit={() => open('')} />;
   return <SiteList onOpen={open} />;
+}
+
+function TokenGate({ onAuthed }: { onAuthed: () => void }) {
+  const [token, setToken] = useState('');
+  const [error, setError] = useState('');
+
+  return (
+    <div className="site-list">
+      <h1>wb editor</h1>
+      <p className="muted">This server requires an API token (its WB_API_TOKEN).</p>
+      <form
+        className="add-page"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          try {
+            await api.login(token);
+            onAuthed();
+          } catch {
+            setError('Invalid token.');
+          }
+        }}
+      >
+        <input
+          type="password"
+          placeholder="API token"
+          value={token}
+          data-testid="token-input"
+          onChange={(e) => setToken(e.target.value)}
+        />
+        <button type="submit" className="primary" data-testid="token-submit">
+          Sign in
+        </button>
+      </form>
+      {error && <p className="error">{error}</p>}
+    </div>
+  );
 }
 
 function SiteList({ onOpen }: { onOpen: (id: string) => void }) {

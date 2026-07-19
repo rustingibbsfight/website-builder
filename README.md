@@ -78,6 +78,8 @@ Data lives in `./data` (override with `WB_DATA_DIR`).
 wb dev   # http://127.0.0.1:4000, OpenAPI at /openapi.json
 ```
 
+**Auth:** set `WB_API_TOKEN` before exposing the server beyond localhost. With it set, every route except `/health` and the editor shell requires the token — `Authorization: Bearer <token>` or `x-api-key` for API clients (Eve, scripts, curl), and the editor shows a sign-in screen that exchanges the token for an HttpOnly session cookie (which also authenticates the preview iframe). Unset = open, for local development.
+
 Highlights (full spec in `/openapi.json`):
 
 - `POST /sites/from-template` `{template, name, brand}` — branded site in one call
@@ -160,4 +162,4 @@ The editor is a React app mounted on the same REST API agents use — every edit
 ## Roadmap
 
 - Responsive per-breakpoint overrides UI in the editor (engine already supports them).
-- More templates; Postgres store option; auth on the wb API.
+- More templates; Postgres store option.

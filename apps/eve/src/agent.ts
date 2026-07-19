@@ -41,7 +41,7 @@ export async function runEve(
   overrides: { client?: Anthropic } = {},
 ): Promise<AgentResult> {
   const client = overrides.client ?? new Anthropic();
-  const wb = new WbClient(config.wbApiUrl);
+  const wb = new WbClient(config.wbApiUrl, config.wbApiToken);
   const tools = buildTools(wb, config);
   const toolCalls: string[] = [];
 

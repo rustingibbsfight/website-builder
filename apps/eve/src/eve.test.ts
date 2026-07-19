@@ -158,3 +158,38 @@ describe('eve tools against a real wb server', () => {
     expect(error).toContain('not found');
   });
 });
+
+describe('eve against a token-protected wb server', () => {
+  it('sends the bearer token and fails cleanly without it', async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), 'wb-eve-auth-'));
+    const core = new WbCore({ dataDir });
+    const app = await buildApp({ core, openapi: false, apiToken: 'sekrit' });
+    await app.listen({ port: 0, host: '127.0.0.1' });
+    const address = app.server.address();
+    const baseUrl = `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`;
+    const config: EveConfig = {
+      wbApiUrl: baseUrl,
+      wbApiToken: 'sekrit',
+      slackBotToken: 'x',
+      slackSigningSecret: 'x',
+      model: 'claude-opus-4-8',
+    };
+    try {
+      const withToken = buildTools(new WbClient(baseUrl, 'sekrit'), config);
+      const ok = await (withToken.find((t) => t.name === 'list_templates') as {
+        run: (i: never) => Promise<string>;
+      }).run({} as never);
+      expect(ok).toContain('breakthrough-medical');
+
+      const without = buildTools(new WbClient(baseUrl), config);
+      const denied = await (without.find((t) => t.name === 'list_templates') as {
+        run: (i: never) => Promise<string>;
+      }).run({} as never);
+      expect(denied).toMatch(/^Error: .*unauthorized/);
+    } finally {
+      await app.close();
+      core.close();
+      rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+});

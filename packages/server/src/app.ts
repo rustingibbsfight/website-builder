@@ -10,6 +10,7 @@ import {
   TreeOpSchema,
 } from '@wb/schema';
 import Fastify, { type FastifyInstance } from 'fastify';
+import { registerAuth } from './auth.js';
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
@@ -52,6 +53,12 @@ export interface BuildAppOptions {
   openapi?: boolean;
   /** Path to the built editor SPA (auto-resolved from @wb/editor when omitted). */
   editorDist?: string;
+  /**
+   * API token. When set (or WB_API_TOKEN is in the environment), all routes
+   * except /health and /auth/* require it — via Authorization: Bearer,
+   * x-api-key, or the session cookie from POST /auth/login. Unset = open.
+   */
+  apiToken?: string;
 }
 
 export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> {
@@ -60,6 +67,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   await app.register(multipart, { limits: { fileSize: 25 * 1024 * 1024 } });
+  await registerAuth(app, opts.apiToken ?? process.env.WB_API_TOKEN);
 
   if (opts.openapi !== false) {
     await app.register(swagger, {

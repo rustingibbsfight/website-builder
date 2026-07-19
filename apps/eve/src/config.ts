@@ -1,6 +1,8 @@
 export interface EveConfig {
   /** Base URL of the wb REST API (a `wb dev` deployment), e.g. https://wb.internal.example */
   wbApiUrl: string;
+  /** Token for the wb API (its WB_API_TOKEN). Omit only if the API is open. */
+  wbApiToken?: string;
   slackBotToken: string;
   slackSigningSecret: string;
   /** Claude model for the agent loop. */
@@ -17,6 +19,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): EveConfig {
   };
   return {
     wbApiUrl: required('WB_API_URL').replace(/\/$/, ''),
+    ...(env.WB_API_TOKEN ? { wbApiToken: env.WB_API_TOKEN } : {}),
     slackBotToken: required('SLACK_BOT_TOKEN'),
     slackSigningSecret: required('SLACK_SIGNING_SECRET'),
     model: env.ANTHROPIC_MODEL ?? 'claude-opus-4-8',

@@ -20,6 +20,9 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  authMe: () => req<{ authRequired: boolean; authenticated: boolean }>('/auth/me'),
+  login: (token: string) =>
+    req<{ ok: boolean }>('/auth/login', { method: 'POST', body: JSON.stringify({ token }) }),
   listSites: () => req<Site[]>('/sites'),
   getSite: (siteId: string) => req<Site>(`/sites/${siteId}`),
   listPages: (siteId: string) => req<PageSummary[]>(`/sites/${siteId}/pages`),

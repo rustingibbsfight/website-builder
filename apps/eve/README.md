@@ -28,10 +28,10 @@ Eve is stateless: conversation context is rebuilt from the Slack thread on every
 Vercel functions can't run SQLite, so the builder backend runs wherever you like (a small VM, Fly.io, Render…):
 
 ```bash
-wb dev --port 4000      # expose as https://wb.yourdomain.com
+WB_API_TOKEN=$(openssl rand -hex 24) wb dev --port 4000   # expose as https://wb.yourdomain.com
 ```
 
-> The wb API currently has no auth — put it behind a private network, VPN, or an authenticating reverse proxy before exposing it to the internet.
+Set `WB_API_TOKEN` on the wb host and give Eve the same value — with it set, the API rejects unauthenticated requests, and the browser editor asks for the token on first visit.
 
 ### 2. Create the Slack app
 
@@ -65,6 +65,7 @@ vercel deploy --prod
 | `SLACK_BOT_TOKEN` | ✅ | `xoxb-…` bot token |
 | `SLACK_SIGNING_SECRET` | ✅ | Request signature verification |
 | `WB_API_URL` | ✅ | Base URL of the wb REST API |
+| `WB_API_TOKEN` | ✅* | The wb server's `WB_API_TOKEN` (*required when the API has auth enabled — it should) |
 | `ANTHROPIC_MODEL` | — | Defaults to `claude-opus-4-8` |
 | `WB_DEPLOY_ADAPTER` | — | Default adapter for `deploy_site` |
 

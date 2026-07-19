@@ -1,11 +1,17 @@
 /** Thin HTTP client for the wb REST API — Eve's hands. */
 export class WbClient {
-  constructor(private baseUrl: string) {}
+  constructor(
+    private baseUrl: string,
+    private apiToken?: string,
+  ) {}
 
   async req<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
     const res = await fetch(`${this.baseUrl}${path}`, {
       method,
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        ...(this.apiToken ? { authorization: `Bearer ${this.apiToken}` } : {}),
+      },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
     const text = await res.text();
