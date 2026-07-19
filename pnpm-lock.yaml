@@ -19,6 +19,9 @@ importers:
 
   packages/cli:
     dependencies:
+      '@wb/components':
+        specifier: workspace:*
+        version: link:../components
       '@wb/core':
         specifier: workspace:*
         version: link:../core
@@ -94,12 +97,21 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.6.0
         version: 1.29.0(zod@3.25.76)
+      '@wb/components':
+        specifier: workspace:*
+        version: link:../components
       '@wb/core':
         specifier: workspace:*
         version: link:../core
       '@wb/schema':
         specifier: workspace:*
         version: link:../schema
+      '@wb/server':
+        specifier: workspace:*
+        version: link:../server
+      playwright:
+        specifier: ^1.61.1
+        version: 1.61.1
       zod:
         specifier: ^3.24.1
         version: 3.25.76

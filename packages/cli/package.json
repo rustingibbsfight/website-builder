@@ -8,6 +8,7 @@
   "scripts": { "build": "tsc -p .", "test": "echo no tests" },
   "dependencies": {
     "@wb/core": "workspace:*",
+    "@wb/components": "workspace:*",
     "@wb/server": "workspace:*",
     "@wb/mcp": "workspace:*",
     "commander": "^13.1.0"
