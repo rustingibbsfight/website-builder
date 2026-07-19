@@ -80,6 +80,17 @@ wb dev   # http://127.0.0.1:4000, OpenAPI at /openapi.json
 
 **Auth:** set `WB_API_TOKEN` before exposing the server beyond localhost. With it set, every route except `/health` and the editor shell requires the token — `Authorization: Bearer <token>` or `x-api-key` for API clients (Eve, scripts, curl), and the editor shows a sign-in screen that exchanges the token for an HttpOnly session cookie (which also authenticates the preview iframe). Unset = open, for local development.
 
+## Storage backends
+
+The data layer is backend-agnostic, selected by env vars. Unset everything and it's a zero-config local SQLite file + local asset folder — exactly the CLI/self-host experience.
+
+| State | Local default | Remote / serverless |
+|---|---|---|
+| Database | SQLite file under `WB_DATA_DIR` | **libSQL/Turso** — `WB_DB_URL` (`libsql://…`) + `WB_DB_TOKEN` |
+| Uploaded assets | local `assets/` folder | **R2 / S3** — `WB_ASSET_STORE=s3`, `WB_S3_BUCKET`, `WB_S3_ACCESS_KEY_ID`, `WB_S3_SECRET_ACCESS_KEY`, and for R2 `WB_S3_ENDPOINT` (`https://<acct>.r2.cloudflarestorage.com`) |
+
+`@wb/core` opens the same async libSQL client for a local `file:` URL and a remote `libsql://` URL, and routes every asset byte (upload, preview, publish) through an `AssetStorage` interface — so nothing touches the local disk except when you choose the local backend. This is what lets the API run on Vercel (see `apps/wb-api`).
+
 Highlights (full spec in `/openapi.json`):
 
 - `POST /sites/from-template` `{template, name, brand}` — branded site in one call

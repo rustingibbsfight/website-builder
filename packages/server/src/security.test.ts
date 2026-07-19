@@ -12,7 +12,7 @@ let app: FastifyInstance;
 
 beforeEach(async () => {
   dataDir = mkdtempSync(join(tmpdir(), 'wb-sec-'));
-  core = new WbCore({ dataDir });
+  core = await WbCore.create({ dataDir });
   app = await buildApp({ core });
 });
 

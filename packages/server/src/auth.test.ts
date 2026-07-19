@@ -14,7 +14,7 @@ let app: FastifyInstance;
 
 beforeEach(async () => {
   dataDir = mkdtempSync(join(tmpdir(), 'wb-auth-'));
-  core = new WbCore({ dataDir });
+  core = await WbCore.create({ dataDir });
   app = await buildApp({ core, apiToken: TOKEN });
 });
 
@@ -55,7 +55,7 @@ describe('token auth', () => {
     const sites = await app.inject({ url: '/sites', headers: { cookie } });
     expect(sites.statusCode).toBe(200);
     // Preview documents also work via cookie (the editor iframe path).
-    const site = core.createSiteFromTemplate('breakthrough-medical');
+    const site = await core.createSiteFromTemplate('breakthrough-medical');
     const preview = await app.inject({ url: `/preview/${site.id}/`, headers: { cookie } });
     expect(preview.statusCode).toBe(200);
     const previewNoAuth = await app.inject({ url: `/preview/${site.id}/` });

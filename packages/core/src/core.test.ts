@@ -9,9 +9,9 @@ import { NotFoundError, ValidationError } from './errors.js';
 let dataDir: string;
 let core: WbCore;
 
-beforeEach(() => {
+beforeEach(async () => {
   dataDir = mkdtempSync(join(tmpdir(), 'wb-test-'));
-  core = new WbCore({ dataDir });
+  core = await WbCore.create({ dataDir });
 });
 
 afterEach(() => {
@@ -20,35 +20,35 @@ afterEach(() => {
 });
 
 describe('WbCore sites & pages', () => {
-  it('creates a blank site with a home page', () => {
-    const site = core.createSite('My Clinic');
+  it('creates a blank site with a home page', async () => {
+    const site = await core.createSite('My Clinic');
     expect(site.theme.brandName).toBe('My Clinic');
-    const pages = core.listPages(site.id);
+    const pages = await core.listPages(site.id);
     expect(pages).toHaveLength(1);
     expect(pages[0]!.slug).toBe('');
     expect(pages[0]!.tree.type).toBe('page-root');
   });
 
-  it('applies ops with registry validation and structured errors', () => {
-    const site = core.createSite('Ops Site');
-    const page = core.listPages(site.id)[0]!;
+  it('applies ops with registry validation and structured errors', async () => {
+    const site = await core.createSite('Ops Site');
+    const page = (await core.listPages(site.id))[0]!;
     const rootId = page.tree.id;
 
-    const updated = core.applyPageOps(site.id, page.id, [
+    const updated = await core.applyPageOps(site.id, page.id, [
       { op: 'insert', parentId: rootId, node: { type: 'section', children: [
         { type: 'heading', props: { text: 'Hello', level: 1 } },
       ] } },
     ]);
     expect(updated.tree.children).toHaveLength(1);
 
-    expect(() =>
+    await expect(
       core.applyPageOps(site.id, page.id, [
         { op: 'insert', parentId: rootId, node: { type: 'nope', props: {} } },
       ]),
-    ).toThrow(/unknown component "nope"/);
+    ).rejects.toThrow(/unknown component "nope"/);
 
     try {
-      core.applyPageOps(site.id, page.id, [
+      await core.applyPageOps(site.id, page.id, [
         { op: 'update', nodeId: updated.tree.children![0]!.id, props: {} },
         { op: 'remove', nodeId: 'missing123' },
       ]);
@@ -59,52 +59,51 @@ describe('WbCore sites & pages', () => {
     }
   });
 
-  it('rejects invalid component props via ops', () => {
-    const site = core.createSite('Val Site');
-    const page = core.listPages(site.id)[0]!;
-    expect(() =>
+  it('rejects invalid component props via ops', async () => {
+    const site = await core.createSite('Val Site');
+    const page = (await core.listPages(site.id))[0]!;
+    await expect(
       core.applyPageOps(site.id, page.id, [
         { op: 'insert', parentId: page.tree.id, node: { type: 'button', props: { label: 'x' } } },
       ]),
-    ).toThrow(/href/);
+    ).rejects.toThrow(/href/);
   });
 
-  it('enforces unique slugs and slug format', () => {
-    const site = core.createSite('Slugs');
-    expect(() => core.addPage(site.id, '', 'Another home')).toThrow(ValidationError);
-    expect(() => core.addPage(site.id, 'Bad Slug!', 'X')).toThrow(/invalid slug/);
-    core.addPage(site.id, 'services', 'Services');
-    expect(core.getPage(site.id, 'services').title).toBe('Services');
+  it('enforces unique slugs and slug format', async () => {
+    const site = await core.createSite('Slugs');
+    await expect(core.addPage(site.id, '', 'Another home')).rejects.toThrow(ValidationError);
+    await expect(core.addPage(site.id, 'Bad Slug!', 'X')).rejects.toThrow(/invalid slug/);
+    await core.addPage(site.id, 'services', 'Services');
+    expect((await core.getPage(site.id, 'services')).title).toBe('Services');
   });
 
-  it('merges theme patches', () => {
-    const site = core.createSite('Theme Site');
-    const updated = core.setTheme(site.id, { colors: { primary: '#ff0000' } as never });
+  it('merges theme patches', async () => {
+    const site = await core.createSite('Theme Site');
+    const updated = await core.setTheme(site.id, { colors: { primary: '#ff0000' } as never });
     expect(updated.theme.colors.primary).toBe('#ff0000');
     expect(updated.theme.colors.text).toBe('#1f2937'); // untouched
   });
 
-  it('404s cleanly', () => {
-    expect(() => core.getSite('nope')).toThrow(NotFoundError);
-    const site = core.createSite('X');
-    expect(() => core.getPage(site.id, 'nope')).toThrow(NotFoundError);
+  it('404s cleanly', async () => {
+    await expect(core.getSite('nope')).rejects.toThrow(NotFoundError);
+    const site = await core.createSite('X');
+    await expect(core.getPage(site.id, 'nope')).rejects.toThrow(NotFoundError);
   });
 });
 
 describe('template instantiation + publish', () => {
-  it('creates breakthrough-medical with 4 pages and branded assets', () => {
-    const site = core.createSiteFromTemplate('breakthrough-medical');
-    const pages = core.listPages(site.id);
+  it('creates breakthrough-medical with 4 pages and branded assets', async () => {
+    const site = await core.createSiteFromTemplate('breakthrough-medical');
+    const pages = await core.listPages(site.id);
     expect(pages.map((p) => p.slug).sort()).toEqual(['', 'about', 'contact', 'services']);
-    const assets = core.listAssets(site.id);
+    const assets = await core.listAssets(site.id);
     expect(assets.map((a) => a.filename).sort()).toEqual(['about.svg', 'hero.svg', 'logo.svg']);
-    // theme logo remapped to a real asset id
     expect(site.theme.logo?.assetId).toBeTruthy();
     expect(assets.some((a) => a.id === site.theme.logo?.assetId)).toBe(true);
   });
 
-  it('applies brand overrides', () => {
-    const site = core.createSiteFromTemplate('breakthrough-medical', 'Acme Health', {
+  it('applies brand overrides', async () => {
+    const site = await core.createSiteFromTemplate('breakthrough-medical', 'Acme Health', {
       colors: { primary: '#112233' },
     });
     expect(site.name).toBe('Acme Health');
@@ -113,7 +112,7 @@ describe('template instantiation + publish', () => {
   });
 
   it('publishes to dist with pages, css, assets, sitemap — and no JS', async () => {
-    const site = core.createSiteFromTemplate('breakthrough-medical', undefined, {
+    const site = await core.createSiteFromTemplate('breakthrough-medical', undefined, {
       baseUrl: 'https://breakthrough.example',
     });
     const result = await core.publishSite(site.id);
@@ -127,14 +126,17 @@ describe('template instantiation + publish', () => {
     expect(html).not.toContain('<script>');
     const css = readFileSync(join(result.distPath, 'styles.css'), 'utf8');
     expect(css).toContain('--color-primary:#0e7c66');
-    const builds = core.listBuilds(site.id);
+    // assets were copied into the build from storage
+    expect(result.files.some((f) => f.startsWith('assets/'))).toBe(true);
+    expect(existsSync(join(result.distPath, 'assets'))).toBe(true);
+    const builds = await core.listBuilds(site.id);
     expect(builds).toHaveLength(1);
   });
 
   it('republish after set_theme changes the css', async () => {
-    const site = core.createSiteFromTemplate('breakthrough-medical');
+    const site = await core.createSiteFromTemplate('breakthrough-medical');
     await core.publishSite(site.id);
-    core.setTheme(site.id, { colors: { primary: '#123456' } as never });
+    await core.setTheme(site.id, { colors: { primary: '#123456' } as never });
     const result = await core.publishSite(site.id);
     const css = readFileSync(join(result.distPath, 'styles.css'), 'utf8');
     expect(css).toContain('--color-primary:#123456');
@@ -142,27 +144,37 @@ describe('template instantiation + publish', () => {
 });
 
 describe('preview rendering', () => {
-  it('renders pages, css, and assets under a base path', () => {
-    const site = core.createSiteFromTemplate('breakthrough-medical');
+  it('renders pages, css, and asset bytes under a base path', async () => {
+    const site = await core.createSiteFromTemplate('breakthrough-medical');
     const base = `/preview/${site.id}`;
-    const home = core.renderPreviewPath(site.id, '/', base);
+    const home = await core.renderPreviewPath(site.id, '/', base);
     expect(home?.kind).toBe('html');
     const body = (home as { body: string }).body;
     expect(body).toContain(`href="${base}/styles.css"`);
     expect(body).toContain(`${base}/assets/`);
-    const css = core.renderPreviewPath(site.id, '/styles.css', base);
+    const css = await core.renderPreviewPath(site.id, '/styles.css', base);
     expect(css?.kind).toBe('css');
-    const missing = core.renderPreviewPath(site.id, '/nope/', base);
+
+    // an asset path returns bytes
+    const assets = await core.listAssets(site.id);
+    const asset = await core.renderPreviewPath(site.id, `/assets/${assets[0]!.path}`, base);
+    expect(asset?.kind).toBe('asset');
+    expect((asset as { body: Buffer }).body.length).toBeGreaterThan(0);
+
+    const missing = await core.renderPreviewPath(site.id, '/nope/', base);
     expect(missing).toBeNull();
   });
 });
 
 describe('assets', () => {
-  it('uploads and deletes asset files', () => {
-    const site = core.createSite('Asset Site');
-    const asset = core.addAsset(site.id, 'photo.svg', 'image/svg+xml', '<svg xmlns="http://www.w3.org/2000/svg"/>');
-    expect(existsSync(core.assetFilePath(site.id, asset.id))).toBe(true);
-    core.deleteAsset(site.id, asset.id);
-    expect(core.listAssets(site.id)).toHaveLength(0);
+  it('uploads, reads, and deletes assets', async () => {
+    const site = await core.createSite('Asset Site');
+    const asset = await core.addAsset(site.id, 'photo.svg', 'image/svg+xml', '<svg xmlns="http://www.w3.org/2000/svg"/>');
+    const read = await core.readAsset(site.id, asset.id);
+    expect(read.buffer.toString()).toContain('<svg');
+    expect(read.mime).toBe('image/svg+xml');
+    await core.deleteAsset(site.id, asset.id);
+    expect(await core.listAssets(site.id)).toHaveLength(0);
+    await expect(core.readAsset(site.id, asset.id)).rejects.toThrow(/not found/);
   });
 });

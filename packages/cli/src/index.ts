@@ -7,8 +7,12 @@ import { serveStatic } from './serve-static.js';
 
 const dataDir = process.env.WB_DATA_DIR ?? resolve(process.cwd(), 'data');
 
-function core(): WbCore {
-  return new WbCore({ dataDir });
+function core(): Promise<WbCore> {
+  return WbCore.create({
+    dataDir,
+    ...(process.env.WB_DB_URL ? { dbUrl: process.env.WB_DB_URL } : {}),
+    ...(process.env.WB_DB_TOKEN ? { dbToken: process.env.WB_DB_TOKEN } : {}),
+  });
 }
 
 function out(value: unknown): void {
@@ -38,8 +42,8 @@ program
   .option('--font-body <stack>', 'body font stack name')
   .option('--logo-url <url>', 'external logo URL')
   .option('--base-url <url>', 'canonical base URL for sitemap/SEO')
-  .action((name: string, opts: Record<string, string | undefined>) => {
-    const c = core();
+  .action(async (name: string, opts: Record<string, string | undefined>) => {
+    const c = await core();
     try {
       const brand = {
         ...(opts.brandPrimary || opts.brandSecondary || opts.brandAccent
@@ -63,9 +67,9 @@ program
         ...(opts.baseUrl ? { baseUrl: opts.baseUrl } : {}),
       };
       const site = opts.template
-        ? c.createSiteFromTemplate(opts.template, name, brand as never)
-        : c.createSite(name);
-      const pages = c.listPages(site.id);
+        ? await c.createSiteFromTemplate(opts.template, name, brand as never)
+        : await c.createSite(name);
+      const pages = await c.listPages(site.id);
       out({
         siteId: site.id,
         name: site.name,
@@ -82,8 +86,8 @@ program
 program
   .command('templates')
   .description('List available templates')
-  .action(() => {
-    const c = core();
+  .action(async () => {
+    const c = await core();
     out(c.listTemplates());
     c.close();
   });
@@ -92,21 +96,19 @@ const sites = program.command('sites').description('Manage sites');
 sites
   .command('ls')
   .description('List sites')
-  .action(() => {
-    const c = core();
-    out(
-      c.listSites().map((s) => ({ id: s.id, name: s.name, updatedAt: s.updatedAt })),
-    );
+  .action(async () => {
+    const c = await core();
+    out((await c.listSites()).map((s) => ({ id: s.id, name: s.name, updatedAt: s.updatedAt })));
     c.close();
   });
 sites
   .command('rm')
   .argument('<siteId>')
   .description('Delete a site (and its assets/builds)')
-  .action((siteId: string) => {
-    const c = core();
+  .action(async (siteId: string) => {
+    const c = await core();
     try {
-      c.deleteSite(siteId);
+      await c.deleteSite(siteId);
       out(`deleted ${siteId}`);
     } catch (err) {
       fail(err);
@@ -141,10 +143,10 @@ page
   .argument('<siteId>')
   .argument('<slug>')
   .option('--title <title>', 'page title')
-  .action((siteId: string, slug: string, opts: { title?: string }) => {
-    const c = core();
+  .action(async (siteId: string, slug: string, opts: { title?: string }) => {
+    const c = await core();
     try {
-      const p = c.addPage(siteId, slug, opts.title ?? slug);
+      const p = await c.addPage(siteId, slug, opts.title ?? slug);
       out({ pageId: p.id, slug: p.slug || '(home)', rootId: p.tree.id });
     } catch (err) {
       fail(err);
@@ -155,10 +157,10 @@ page
 page
   .command('ls')
   .argument('<siteId>')
-  .action((siteId: string) => {
-    const c = core();
+  .action(async (siteId: string) => {
+    const c = await core();
     try {
-      out(c.listPages(siteId).map((p) => ({ id: p.id, slug: p.slug || '(home)', title: p.title })));
+      out((await c.listPages(siteId)).map((p) => ({ id: p.id, slug: p.slug || '(home)', title: p.title })));
     } catch (err) {
       fail(err);
     } finally {
@@ -169,10 +171,10 @@ page
   .command('rm')
   .argument('<siteId>')
   .argument('<pageIdOrSlug>')
-  .action((siteId: string, pageId: string) => {
-    const c = core();
+  .action(async (siteId: string, pageId: string) => {
+    const c = await core();
     try {
-      c.deletePage(siteId, pageId);
+      await c.deletePage(siteId, pageId);
       out(`deleted page ${pageId}`);
     } catch (err) {
       fail(err);
@@ -196,9 +198,9 @@ program
   .option('--font-heading <stack>')
   .option('--font-body <stack>')
   .option('--brand-name <name>')
-  .action((action: string, siteId: string, opts: Record<string, string | undefined>) => {
+  .action(async (action: string, siteId: string, opts: Record<string, string | undefined>) => {
     if (action !== 'set') fail(`unknown theme action "${action}" (expected: set)`);
-    const c = core();
+    const c = await core();
     try {
       const colorKeys = ['primary', 'secondary', 'accent', 'background', 'surface', 'text'] as const;
       const colors: Record<string, string> = {};
@@ -216,7 +218,7 @@ program
           : {}),
         ...(opts.brandName ? { brandName: opts.brandName } : {}),
       };
-      const site = c.setTheme(siteId, patch as never);
+      const site = await c.setTheme(siteId, patch as never);
       out(site.theme);
     } catch (err) {
       fail(err);
@@ -230,10 +232,10 @@ tree
   .command('get')
   .argument('<siteId>')
   .argument('<pageIdOrSlug>')
-  .action((siteId: string, pageId: string) => {
-    const c = core();
+  .action(async (siteId: string, pageId: string) => {
+    const c = await core();
     try {
-      out(c.getTree(siteId, pageId));
+      out(await c.getTree(siteId, pageId));
     } catch (err) {
       fail(err);
     } finally {
@@ -246,11 +248,11 @@ tree
   .argument('<siteId>')
   .argument('<pageIdOrSlug>')
   .requiredOption('--file <path>', 'JSON file containing an array of ops')
-  .action((siteId: string, pageId: string, opts: { file: string }) => {
-    const c = core();
+  .action(async (siteId: string, pageId: string, opts: { file: string }) => {
+    const c = await core();
     try {
       const ops = JSON.parse(readFileSync(opts.file, 'utf8'));
-      const updated = c.applyPageOps(siteId, pageId, ops);
+      const updated = await c.applyPageOps(siteId, pageId, ops);
       out({ ok: true, rootId: updated.tree.id });
     } catch (err) {
       fail(err);
@@ -265,7 +267,7 @@ program
   .argument('<siteId>')
   .option('-o, --out <dir>', 'output directory (default data/dist/<siteId>)')
   .action(async (siteId: string, opts: { out?: string }) => {
-    const c = core();
+    const c = await core();
     try {
       const result = await c.publishSite(siteId, opts.out ? resolve(opts.out) : undefined);
       out({
@@ -291,7 +293,7 @@ program
   .option('--target-dir <dir>', 'static adapter: copy build here')
   .option('--project-name <name>', 'provider project name')
   .action(async (siteId: string, opts: { adapter: string; targetDir?: string; projectName?: string }) => {
-    const c = core();
+    const c = await core();
     try {
       const result = await c.publishSite(siteId);
       const deployed = deployDist(result.distPath, opts.adapter as DeployAdapterName, {

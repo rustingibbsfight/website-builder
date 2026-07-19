@@ -14,7 +14,7 @@ let client: Client;
 
 beforeEach(async () => {
   dataDir = mkdtempSync(join(tmpdir(), 'wb-mcp-'));
-  core = new WbCore({ dataDir });
+  core = await WbCore.create({ dataDir });
   const server = buildMcpServer({
     core,
     ensurePreviewServer: async () => 'http://127.0.0.1:9999',

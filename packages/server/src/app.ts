@@ -123,15 +123,15 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
       },
     },
     async (req, reply) => {
-      const site = core.createSiteFromTemplate(req.body.template, req.body.name, req.body.brand);
-      return reply.status(201).send({ site, pages: core.listPages(site.id) });
+      const site = await core.createSiteFromTemplate(req.body.template, req.body.name, req.body.brand);
+      return reply.status(201).send({ site, pages: await core.listPages(site.id) });
     },
   );
 
   app.post(
     '/sites',
     { schema: { body: z.object({ name: z.string().min(1), theme: ThemeSchema.partial().optional() }).strict() } },
-    async (req, reply) => reply.status(201).send(core.createSite(req.body.name, req.body.theme)),
+    async (req, reply) => reply.status(201).send(await core.createSite(req.body.name, req.body.theme)),
   );
 
   app.get('/sites', async () => core.listSites());
@@ -156,11 +156,11 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   );
 
   app.delete('/sites/:siteId', { schema: { params: SiteIdParams } }, async (req, reply) => {
-    core.deleteSite(req.params.siteId);
+    await core.deleteSite(req.params.siteId);
     return reply.status(204).send();
   });
 
-  app.get('/sites/:siteId/theme', { schema: { params: SiteIdParams } }, async (req) => core.getSite(req.params.siteId).theme);
+  app.get('/sites/:siteId/theme', { schema: { params: SiteIdParams } }, async (req) => (await core.getSite(req.params.siteId)).theme);
 
   app.put(
     '/sites/:siteId/theme',
@@ -171,7 +171,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
         body: ThemeSchema.deepPartial(),
       },
     },
-    async (req) => core.setTheme(req.params.siteId, req.body as never, req.query.merge === 'true').theme,
+    async (req) => (await core.setTheme(req.params.siteId, req.body as never, req.query.merge === 'true')).theme,
   );
 
   for (const which of ['header', 'footer'] as const) {
@@ -194,11 +194,11 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
       },
     },
     async (req, reply) =>
-      reply.status(201).send(core.addPage(req.params.siteId, req.body.slug, req.body.title, req.body.tree)),
+      reply.status(201).send(await core.addPage(req.params.siteId, req.body.slug, req.body.title, req.body.tree)),
   );
 
   app.get('/sites/:siteId/pages', { schema: { params: SiteIdParams } }, async (req) =>
-    core.listPages(req.params.siteId).map(({ tree, ...rest }) => ({ ...rest, rootId: tree.id })),
+    (await core.listPages(req.params.siteId)).map(({ tree, ...rest }) => ({ ...rest, rootId: tree.id })),
   );
 
   app.get('/sites/:siteId/pages/:pageId', { schema: { params: PageParams } }, async (req) =>
@@ -357,19 +357,18 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   }, async (req, reply) => {
     const { siteId } = req.params;
     const rest = req.params['*'] ?? '';
-    const result = core.renderPreviewPath(siteId, `/${rest}`, `/preview/${siteId}`, {
+    const result = await core.renderPreviewPath(siteId, `/${rest}`, `/preview/${siteId}`, {
       editor: req.query.editor === '1',
     });
     if (!result) return reply.status(404).send({ error: `no page at "/${rest}"` });
     if (result.kind === 'asset') {
-      const { createReadStream } = await import('node:fs');
       // Uploaded assets (esp. SVG) must never execute script in this origin —
       // an SVG with <script> could otherwise ride the editor session cookie.
       return reply
         .type(result.mime)
         .header('content-security-policy', "default-src 'none'; style-src 'unsafe-inline'")
         .header('x-content-type-options', 'nosniff')
-        .send(createReadStream(result.filePath));
+        .send(result.body);
     }
     const type = result.kind === 'html' ? 'text/html; charset=utf-8' : 'text/css; charset=utf-8';
     return reply.type(type).send(result.body);

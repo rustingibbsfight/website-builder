@@ -14,7 +14,6 @@ import {
   newId,
   normalizeSlug,
   nowIso,
-  OpsError,
   SLUG_RE,
   ThemeSchema,
   validateTreeStructure,
@@ -31,12 +30,13 @@ import {
   type WbNode,
 } from '@wb/schema';
 import { buildBreakthroughMedical, TEMPLATE_META, type BrandOverrides } from '@wb/template-breakthrough-medical';
-import type Database from 'better-sqlite3';
-import { copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import type { Client } from '@libsql/client';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { assetDir, distDir, openDb } from './db.js';
 import { EDITOR_PREVIEW_JS } from './editor-script.js';
 import { NotFoundError, ValidationError } from './errors.js';
+import { createAssetStorage, type AssetStorage } from './storage.js';
 import { AssetStore, BuildStore, PageStore, SiteStore, type BuildRecord } from './stores.js';
 
 export interface TemplateInfo {
@@ -59,21 +59,40 @@ export interface PublishResult {
   warnings: Array<{ page: string; message: string }>;
 }
 
+export interface WbCoreOptions {
+  /** Local data directory (SQLite file + dist output when not using remote stores). */
+  dataDir: string;
+  /** Remote libSQL/Turso URL. Defaults to a local file under dataDir. */
+  dbUrl?: string;
+  dbToken?: string;
+  /** Asset storage. Defaults to env selection (local fs, or S3/R2 via WB_ASSET_STORE=s3). */
+  assetStorage?: AssetStorage;
+}
+
 export class WbCore {
-  readonly db: Database.Database;
   readonly dataDir: string;
   private sites: SiteStore;
   private pages: PageStore;
   private assets: AssetStore;
   private builds: BuildStore;
 
-  constructor(opts: { dataDir: string }) {
-    this.dataDir = opts.dataDir;
-    this.db = openDb({ dataDir: opts.dataDir });
-    this.sites = new SiteStore(this.db);
-    this.pages = new PageStore(this.db);
-    this.assets = new AssetStore(this.db);
-    this.builds = new BuildStore(this.db);
+  private constructor(
+    private db: Client,
+    private storage: AssetStorage,
+    dataDir: string,
+  ) {
+    this.dataDir = dataDir;
+    this.sites = new SiteStore(db);
+    this.pages = new PageStore(db);
+    this.assets = new AssetStore(db);
+    this.builds = new BuildStore(db);
+  }
+
+  /** Open the database (local file or remote Turso), run migrations, wire storage. */
+  static async create(opts: WbCoreOptions): Promise<WbCore> {
+    const db = await openDb({ dataDir: opts.dataDir, dbUrl: opts.dbUrl, dbToken: opts.dbToken });
+    const storage = opts.assetStorage ?? createAssetStorage(opts.dataDir);
+    return new WbCore(db, storage, opts.dataDir);
   }
 
   close(): void {
@@ -86,7 +105,7 @@ export class WbCore {
     return Object.values(TEMPLATES).map((t) => t.meta);
   }
 
-  createSiteFromTemplate(template: string, name?: string, brand: BrandOverrides = {}): Site {
+  createSiteFromTemplate(template: string, name?: string, brand: BrandOverrides = {}): Promise<Site> {
     const entry = TEMPLATES[template];
     if (!entry) {
       throw new ValidationError(
@@ -98,7 +117,7 @@ export class WbCore {
   }
 
   /** Create a site from a full SiteInput (template output or agent bulk import). */
-  importSite(input: SiteInput, nameOverride?: string): Site {
+  async importSite(input: SiteInput, nameOverride?: string): Promise<Site> {
     const siteId = newId();
     const now = nowIso();
 
@@ -108,9 +127,6 @@ export class WbCore {
     for (const asset of input.assets ?? []) {
       const newAssetId = newId();
       idMap.set(asset.id, newAssetId);
-      // Namespace the on-disk path by the fresh id so a template-supplied
-      // filename can never traverse or collide (defense-in-depth: templates
-      // are trusted code, but this keeps importSite safe for untrusted input).
       const safeName = sanitizeFilename(asset.filename);
       assetRecords.push({
         id: newAssetId,
@@ -150,27 +166,20 @@ export class WbCore {
       };
     });
 
-    // Write asset files to disk.
-    if (assetRecords.length > 0) {
-      const dir = assetDir(this.dataDir, siteId);
-      mkdirSync(dir, { recursive: true });
-      (input.assets ?? []).forEach((a, i) => {
-        writeFileSync(join(dir, assetRecords[i]!.path), a.content);
-      });
+    // Everything is validated before any write. Asset bytes first, then rows.
+    const inputAssets = input.assets ?? [];
+    for (let i = 0; i < assetRecords.length; i++) {
+      await this.storage.put(siteId, assetRecords[i]!.path, inputAssets[i]!.content, assetRecords[i]!.mime);
     }
-
-    const insertAll = this.db.transaction(() => {
-      this.sites.insert(site);
-      for (const page of pages) this.pages.insert(page);
-      for (const asset of assetRecords) this.assets.insert(asset);
-    });
-    insertAll();
+    await this.sites.insert(site);
+    for (const page of pages) await this.pages.insert(page);
+    for (const asset of assetRecords) await this.assets.insert(asset);
     return site;
   }
 
   // ── Sites ────────────────────────────────────────────────────────────────
 
-  createSite(name: string, theme?: Partial<Theme>): Site {
+  async createSite(name: string, theme?: Partial<Theme>): Promise<Site> {
     const now = nowIso();
     const fullTheme = ThemeSchema.parse({
       brandName: name,
@@ -194,40 +203,44 @@ export class WbCore {
       createdAt: now,
       updatedAt: now,
     };
-    this.sites.insert(site);
+    await this.sites.insert(site);
     // Every site starts with an empty home page so ops have a root to target.
-    this.addPage(site.id, '', 'Home');
+    await this.addPage(site.id, '', 'Home');
     return site;
   }
 
-  listSites(): Site[] {
+  listSites(): Promise<Site[]> {
     return this.sites.list();
   }
 
-  getSite(siteId: string): Site {
-    const site = this.sites.get(siteId);
+  async getSite(siteId: string): Promise<Site> {
+    const site = await this.sites.get(siteId);
     if (!site) throw new NotFoundError('site', siteId);
     return site;
   }
 
-  updateSite(siteId: string, patch: { name?: string; settings?: Partial<SiteSettings> }): Site {
-    const site = this.getSite(siteId);
+  async updateSite(siteId: string, patch: { name?: string; settings?: Partial<SiteSettings> }): Promise<Site> {
+    const site = await this.getSite(siteId);
     if (patch.name) site.name = patch.name;
     if (patch.settings) site.settings = { ...site.settings, ...patch.settings };
     site.updatedAt = nowIso();
-    this.sites.update(site);
+    await this.sites.update(site);
     return site;
   }
 
-  deleteSite(siteId: string): void {
-    this.getSite(siteId);
-    this.sites.delete(siteId);
-    rmSync(assetDir(this.dataDir, siteId), { recursive: true, force: true });
+  async deleteSite(siteId: string): Promise<void> {
+    await this.getSite(siteId);
+    // Explicit child cleanup so correctness never depends on FK cascade being
+    // active (remote libSQL backends may not honor connection pragmas).
+    for (const asset of await this.assets.listForSite(siteId)) await this.assets.delete(asset.id);
+    for (const page of await this.pages.listForSite(siteId)) await this.pages.delete(page.id);
+    await this.sites.delete(siteId);
+    await this.storage.deleteSite(siteId);
     rmSync(distDir(this.dataDir, siteId), { recursive: true, force: true });
   }
 
-  setTheme(siteId: string, patch: Partial<Theme>, merge = true): Site {
-    const site = this.getSite(siteId);
+  async setTheme(siteId: string, patch: Partial<Theme>, merge = true): Promise<Site> {
+    const site = await this.getSite(siteId);
     const next = merge
       ? {
           ...site.theme,
@@ -238,12 +251,12 @@ export class WbCore {
       : patch;
     site.theme = ThemeSchema.parse(next);
     site.updatedAt = nowIso();
-    this.sites.update(site);
+    await this.sites.update(site);
     return site;
   }
 
-  setChrome(siteId: string, which: 'header' | 'footer', node: NodeInput | null): Site {
-    const site = this.getSite(siteId);
+  async setChrome(siteId: string, which: 'header' | 'footer', node: NodeInput | null): Promise<Site> {
+    const site = await this.getSite(siteId);
     if (node === null) {
       delete site[which];
     } else {
@@ -252,19 +265,19 @@ export class WbCore {
       site[which] = tree;
     }
     site.updatedAt = nowIso();
-    this.sites.update(site);
+    await this.sites.update(site);
     return site;
   }
 
   // ── Pages ────────────────────────────────────────────────────────────────
 
-  addPage(siteId: string, slug: string, title: string, tree?: NodeInput): Page {
-    this.getSite(siteId);
+  async addPage(siteId: string, slug: string, title: string, tree?: NodeInput): Promise<Page> {
+    await this.getSite(siteId);
     const cleanSlug = normalizeSlug(slug);
     if (cleanSlug !== '' && !SLUG_RE.test(cleanSlug)) {
       throw new ValidationError(`invalid slug "${slug}" — use lowercase letters, digits, hyphens`);
     }
-    if (this.pages.bySlug(siteId, cleanSlug)) {
+    if (await this.pages.bySlug(siteId, cleanSlug)) {
       throw new ValidationError(`page with slug "${cleanSlug || '(home)'}" already exists`);
     }
     const fullTree = tree
@@ -281,38 +294,38 @@ export class WbCore {
       title,
       meta: {},
       tree: fullTree,
-      sortOrder: this.pages.listForSite(siteId).length,
+      sortOrder: (await this.pages.listForSite(siteId)).length,
     };
-    this.pages.insert(page);
-    this.touchSite(siteId);
+    await this.pages.insert(page);
+    await this.touchSite(siteId);
     return page;
   }
 
-  listPages(siteId: string): Page[] {
-    this.getSite(siteId);
+  async listPages(siteId: string): Promise<Page[]> {
+    await this.getSite(siteId);
     return this.pages.listForSite(siteId);
   }
 
-  getPage(siteId: string, pageIdOrSlug: string): Page {
-    const byId = this.pages.get(pageIdOrSlug);
+  async getPage(siteId: string, pageIdOrSlug: string): Promise<Page> {
+    const byId = await this.pages.get(pageIdOrSlug);
     if (byId && byId.siteId === siteId) return byId;
-    const bySlug = this.pages.bySlug(siteId, normalizeSlug(pageIdOrSlug));
+    const bySlug = await this.pages.bySlug(siteId, normalizeSlug(pageIdOrSlug));
     if (bySlug) return bySlug;
     throw new NotFoundError('page', pageIdOrSlug);
   }
 
-  updatePageMeta(
+  async updatePageMeta(
     siteId: string,
     pageIdOrSlug: string,
     patch: { slug?: string; title?: string; meta?: Partial<PageMeta>; sortOrder?: number },
-  ): Page {
-    const page = this.getPage(siteId, pageIdOrSlug);
+  ): Promise<Page> {
+    const page = await this.getPage(siteId, pageIdOrSlug);
     if (patch.slug !== undefined) {
       const cleanSlug = normalizeSlug(patch.slug);
       if (cleanSlug !== '' && !SLUG_RE.test(cleanSlug)) {
         throw new ValidationError(`invalid slug "${patch.slug}"`);
       }
-      const existing = this.pages.bySlug(siteId, cleanSlug);
+      const existing = await this.pages.bySlug(siteId, cleanSlug);
       if (existing && existing.id !== page.id) {
         throw new ValidationError(`page with slug "${cleanSlug || '(home)'}" already exists`);
       }
@@ -321,82 +334,82 @@ export class WbCore {
     if (patch.title !== undefined) page.title = patch.title;
     if (patch.meta) page.meta = { ...page.meta, ...patch.meta };
     if (patch.sortOrder !== undefined) page.sortOrder = patch.sortOrder;
-    this.pages.update(page);
-    this.touchSite(siteId);
+    await this.pages.update(page);
+    await this.touchSite(siteId);
     return page;
   }
 
-  deletePage(siteId: string, pageIdOrSlug: string): void {
-    const page = this.getPage(siteId, pageIdOrSlug);
-    this.pages.delete(page.id);
-    this.touchSite(siteId);
+  async deletePage(siteId: string, pageIdOrSlug: string): Promise<void> {
+    const page = await this.getPage(siteId, pageIdOrSlug);
+    await this.pages.delete(page.id);
+    await this.touchSite(siteId);
   }
 
-  getTree(siteId: string, pageIdOrSlug: string): WbNode {
-    return this.getPage(siteId, pageIdOrSlug).tree;
+  async getTree(siteId: string, pageIdOrSlug: string): Promise<WbNode> {
+    return (await this.getPage(siteId, pageIdOrSlug)).tree;
   }
 
-  setTree(siteId: string, pageIdOrSlug: string, tree: NodeInput): Page {
-    const page = this.getPage(siteId, pageIdOrSlug);
+  async setTree(siteId: string, pageIdOrSlug: string, tree: NodeInput): Promise<Page> {
+    const page = await this.getPage(siteId, pageIdOrSlug);
     const materialized = materializeNode(tree, new Set());
     if (materialized.type !== 'page-root') {
       throw new ValidationError('page tree must be rooted at a page-root node');
     }
     this.validateTree(materialized);
     page.tree = materialized;
-    this.pages.update(page);
-    this.touchSite(siteId);
+    await this.pages.update(page);
+    await this.touchSite(siteId);
     return page;
   }
 
   /** Apply a batch of tree ops atomically. Throws OpsError with the failing op index. */
-  applyPageOps(siteId: string, pageIdOrSlug: string, ops: TreeOp[]): Page {
-    const page = this.getPage(siteId, pageIdOrSlug);
+  async applyPageOps(siteId: string, pageIdOrSlug: string, ops: TreeOp[]): Promise<Page> {
+    const page = await this.getPage(siteId, pageIdOrSlug);
     page.tree = applyOps(page.tree, ops, {
       validateNode: validateNodeAgainstRegistry,
       isContainer,
     });
-    this.pages.update(page);
-    this.touchSite(siteId);
+    await this.pages.update(page);
+    await this.touchSite(siteId);
     return page;
   }
 
   // ── Assets ───────────────────────────────────────────────────────────────
 
-  addAsset(siteId: string, filename: string, mime: string, content: Uint8Array | string): Asset {
-    this.getSite(siteId);
+  async addAsset(siteId: string, filename: string, mime: string, content: Uint8Array | string): Promise<Asset> {
+    await this.getSite(siteId);
     const safeName = sanitizeFilename(filename);
     const id = newId();
     const path = `${id}-${safeName}`;
-    const dir = assetDir(this.dataDir, siteId);
-    mkdirSync(dir, { recursive: true });
-    writeFileSync(join(dir, path), content);
+    await this.storage.put(siteId, path, content, mime);
     const asset: Asset = { id, siteId, filename: safeName, mime, path };
-    this.assets.insert(asset);
-    this.touchSite(siteId);
+    await this.assets.insert(asset);
+    await this.touchSite(siteId);
     return asset;
   }
 
-  listAssets(siteId: string): Asset[] {
-    this.getSite(siteId);
+  async listAssets(siteId: string): Promise<Asset[]> {
+    await this.getSite(siteId);
     return this.assets.listForSite(siteId);
   }
 
-  getAsset(siteId: string, assetId: string): Asset {
-    const asset = this.assets.get(assetId);
+  async getAsset(siteId: string, assetId: string): Promise<Asset> {
+    const asset = await this.assets.get(assetId);
     if (!asset || asset.siteId !== siteId) throw new NotFoundError('asset', assetId);
     return asset;
   }
 
-  assetFilePath(siteId: string, assetId: string): string {
-    const asset = this.getAsset(siteId, assetId);
-    return join(assetDir(this.dataDir, siteId), asset.path);
+  /** Read an asset's bytes (from local fs or R2/S3, wherever it lives). */
+  async readAsset(siteId: string, assetId: string): Promise<{ buffer: Buffer; mime: string; filename: string }> {
+    const asset = await this.getAsset(siteId, assetId);
+    const buffer = await this.storage.get(siteId, asset.path);
+    return { buffer, mime: asset.mime, filename: asset.filename };
   }
 
-  deleteAsset(siteId: string, assetId: string): void {
-    const asset = this.getAsset(siteId, assetId);
-    this.assets.delete(assetId);
-    rmSync(join(assetDir(this.dataDir, siteId), asset.path), { force: true });
+  async deleteAsset(siteId: string, assetId: string): Promise<void> {
+    const asset = await this.getAsset(siteId, assetId);
+    await this.assets.delete(assetId);
+    await this.storage.delete(siteId, asset.path);
   }
 
   // ── Publish ──────────────────────────────────────────────────────────────
@@ -406,20 +419,20 @@ export class WbCore {
   }
 
   private async publishSiteTo(siteId: string, out: string): Promise<PublishResult> {
-    const site = this.getSite(siteId);
-    const pages = this.pages.listForSite(siteId);
+    const site = await this.getSite(siteId);
+    const pages = await this.pages.listForSite(siteId);
     if (pages.length === 0) throw new ValidationError('site has no pages to publish');
-    const assets = this.assets.listForSite(siteId);
+    const assets = await this.assets.listForSite(siteId);
 
     const { files, warnings } = renderSite(site, pages, assets);
     rmSync(out, { recursive: true, force: true });
     const written = await writeDist(files, out);
 
-    const srcAssets = assetDir(this.dataDir, siteId);
-    if (existsSync(srcAssets) && assets.length > 0) {
+    if (assets.length > 0) {
       mkdirSync(join(out, 'assets'), { recursive: true });
       for (const asset of assets) {
-        copyFileSync(join(srcAssets, asset.path), join(out, 'assets', asset.path));
+        const bytes = await this.storage.get(siteId, asset.path);
+        writeFileSync(join(out, 'assets', asset.path), bytes);
         written.push(`assets/${asset.path}`);
       }
     }
@@ -430,32 +443,36 @@ export class WbCore {
       createdAt: nowIso(),
       manifest: { pages: pages.map((p) => p.slug || '(home)'), files: written, warnings, distPath: out },
     };
-    this.builds.insert(build);
+    await this.builds.insert(build);
     return { buildId: build.id, distPath: out, pageCount: pages.length, files: written, warnings };
   }
 
-  listBuilds(siteId: string): BuildRecord[] {
-    this.getSite(siteId);
+  async listBuilds(siteId: string): Promise<BuildRecord[]> {
+    await this.getSite(siteId);
     return this.builds.listForSite(siteId);
   }
 
   // ── Preview ──────────────────────────────────────────────────────────────
 
   /**
-   * Render a draft page (or the stylesheet) for the live preview.
-   * `basePath` (e.g. /preview/<siteId>) prefixes styles/assets/internal links.
-   * With `editor: true`, injects the visual-editor bridge script instead of
-   * the preview nav script (never part of published output).
+   * Render a draft page (or the stylesheet), or return an asset's bytes, for
+   * the live preview. `basePath` (e.g. /preview/<siteId>) prefixes
+   * styles/assets/internal links. With `editor: true`, injects the visual-editor
+   * bridge script instead of the preview nav script (never in published output).
    */
-  renderPreviewPath(
+  async renderPreviewPath(
     siteId: string,
     urlPath: string,
     basePath: string,
     opts: { editor?: boolean } = {},
-  ): { kind: 'html' | 'css'; body: string } | { kind: 'asset'; filePath: string; mime: string } | null {
-    const site = this.getSite(siteId);
-    const pages = this.pages.listForSite(siteId);
-    const assets = this.assets.listForSite(siteId);
+  ): Promise<
+    | { kind: 'html' | 'css'; body: string }
+    | { kind: 'asset'; body: Buffer; mime: string }
+    | null
+  > {
+    const site = await this.getSite(siteId);
+    const pages = await this.pages.listForSite(siteId);
+    const assets = await this.assets.listForSite(siteId);
     const clean = urlPath.replace(/^\/+|\/+$/g, '');
 
     if (clean === 'styles.css') {
@@ -471,15 +488,14 @@ export class WbCore {
       const rel = clean.slice('assets/'.length);
       const asset = assets.find((a) => a.path === rel);
       if (!asset) return null;
-      return { kind: 'asset', filePath: join(assetDir(this.dataDir, siteId), asset.path), mime: asset.mime };
+      const buffer = await this.storage.get(siteId, asset.path);
+      return { kind: 'asset', body: buffer, mime: asset.mime };
     }
 
     const page = pages.find((p) => normalizeSlug(p.slug) === clean);
     if (!page) return null;
     const resolveAsset = this.previewAssetResolver(assets, basePath);
-    const bodyExtra = opts.editor
-      ? `<script>${EDITOR_PREVIEW_JS}</script>`
-      : previewNavScript(basePath);
+    const bodyExtra = opts.editor ? `<script>${EDITOR_PREVIEW_JS}</script>` : previewNavScript(basePath);
     const html = renderPage(site, page, { resolveAsset, bodyExtra }).replace(
       'href="/styles.css"',
       `href="${basePath}/styles.css"`,
@@ -505,11 +521,11 @@ export class WbCore {
     walk(tree, (node) => validateNodeAgainstRegistry(node));
   }
 
-  private touchSite(siteId: string): void {
-    const site = this.sites.get(siteId);
+  private async touchSite(siteId: string): Promise<void> {
+    const site = await this.sites.get(siteId);
     if (site) {
       site.updatedAt = nowIso();
-      this.sites.update(site);
+      await this.sites.update(site);
     }
   }
 }

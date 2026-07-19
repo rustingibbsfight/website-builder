@@ -124,7 +124,7 @@ describe('eve tools against a real wb server', () => {
 
   beforeAll(async () => {
     dataDir = mkdtempSync(join(tmpdir(), 'wb-eve-'));
-    core = new WbCore({ dataDir });
+    core = await WbCore.create({ dataDir });
     app = await buildApp({ core, openapi: false });
     await app.listen({ port: 0, host: '127.0.0.1' });
     const address = app.server.address();
@@ -201,7 +201,7 @@ describe('eve tools against a real wb server', () => {
 describe('eve against a token-protected wb server', () => {
   it('sends the bearer token and fails cleanly without it', async () => {
     const dataDir = mkdtempSync(join(tmpdir(), 'wb-eve-auth-'));
-    const core = new WbCore({ dataDir });
+    const core = await WbCore.create({ dataDir });
     const app = await buildApp({ core, openapi: false, apiToken: 'sekrit' });
     await app.listen({ port: 0, host: '127.0.0.1' });
     const address = app.server.address();

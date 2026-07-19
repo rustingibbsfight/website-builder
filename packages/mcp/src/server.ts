@@ -57,9 +57,9 @@ export function buildMcpServer(deps: McpDeps): McpServer {
     async ({ name, template, brand }) => {
       try {
         const site = template
-          ? core.createSiteFromTemplate(template, name, brand)
-          : core.createSite(name);
-        const pages = core.listPages(site.id);
+          ? await core.createSiteFromTemplate(template, name, brand)
+          : await core.createSite(name);
+        const pages = await core.listPages(site.id);
         return text({
           siteId: site.id,
           name: site.name,
@@ -107,10 +107,10 @@ export function buildMcpServer(deps: McpDeps): McpServer {
     async ({ siteId }) => {
       try {
         if (!siteId) {
-          return text(core.listSites().map((s) => ({ id: s.id, name: s.name, updatedAt: s.updatedAt })));
+          return text((await core.listSites()).map((s) => ({ id: s.id, name: s.name, updatedAt: s.updatedAt })));
         }
-        const site = core.getSite(siteId);
-        const pages = core.listPages(siteId);
+        const site = await core.getSite(siteId);
+        const [pages, assets] = await Promise.all([core.listPages(siteId), core.listAssets(siteId)]);
         return text({
           id: site.id,
           name: site.name,
@@ -118,7 +118,7 @@ export function buildMcpServer(deps: McpDeps): McpServer {
           settings: site.settings,
           header: site.header ? `${site.header.id} header` : null,
           footer: site.footer ? `${site.footer.id} footer` : null,
-          assets: core.listAssets(siteId).map((a) => ({ id: a.id, filename: a.filename })),
+          assets: assets.map((a) => ({ id: a.id, filename: a.filename })),
           pages: pages.map((p) => ({ id: p.id, slug: p.slug || '(home)', title: p.title, rootId: p.tree.id })),
         });
       } catch (err) {
@@ -137,7 +137,7 @@ export function buildMcpServer(deps: McpDeps): McpServer {
     },
     async ({ siteId, page, full }) => {
       try {
-        const p = core.getPage(siteId, page);
+        const p = await core.getPage(siteId, page);
         if (full) return text(p);
         return text(
           `page ${p.id} slug=/${normalizeSlug(p.slug)} title="${p.title}"\n${treeOutline(p.tree)}`,
@@ -158,7 +158,7 @@ export function buildMcpServer(deps: McpDeps): McpServer {
     },
     async ({ siteId, page, ops }) => {
       try {
-        const updated = core.applyPageOps(siteId, page, ops);
+        const updated = await core.applyPageOps(siteId, page, ops);
         return text(`applied ${ops.length} op(s). Updated outline:\n${treeOutline(updated.tree)}`);
       } catch (err) {
         return errText(err);
@@ -178,8 +178,8 @@ export function buildMcpServer(deps: McpDeps): McpServer {
     },
     async ({ siteId, slug, title, description, tree }) => {
       try {
-        const page = core.addPage(siteId, slug, title, tree);
-        if (description) core.updatePageMeta(siteId, page.id, { meta: { description } });
+        const page = await core.addPage(siteId, slug, title, tree);
+        if (description) await core.updatePageMeta(siteId, page.id, { meta: { description } });
         return text({ pageId: page.id, slug: page.slug || '(home)', rootId: page.tree.id });
       } catch (err) {
         return errText(err);
@@ -200,7 +200,7 @@ export function buildMcpServer(deps: McpDeps): McpServer {
     },
     async ({ siteId, ...patch }) => {
       try {
-        const site = core.setTheme(siteId, patch as never);
+        const site = await core.setTheme(siteId, patch as never);
         return text(site.theme);
       } catch (err) {
         return errText(err);
@@ -233,7 +233,7 @@ export function buildMcpServer(deps: McpDeps): McpServer {
         } else {
           return errText(new Error('provide either url or base64'));
         }
-        const asset = core.addAsset(siteId, filename, resolvedMime ?? 'application/octet-stream', content);
+        const asset = await core.addAsset(siteId, filename, resolvedMime ?? 'application/octet-stream', content);
         return text({ assetId: asset.id, filename: asset.filename, use: { image: { assetId: asset.id, alt: '<describe it>' } } });
       } catch (err) {
         return errText(err);
@@ -276,7 +276,7 @@ export function buildMcpServer(deps: McpDeps): McpServer {
     },
     async ({ siteId, path, screenshot }) => {
       try {
-        core.getSite(siteId);
+        await core.getSite(siteId);
         const base = await deps.ensurePreviewServer();
         const url = `${base}/preview/${siteId}${path ?? '/'}`;
         if (!screenshot) return text({ previewUrl: url });

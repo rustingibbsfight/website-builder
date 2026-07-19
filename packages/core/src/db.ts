@@ -1,10 +1,14 @@
-import Database from 'better-sqlite3';
+import { createClient, type Client } from '@libsql/client';
 import { mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 export interface DbOptions {
-  /** Directory holding wb.sqlite, assets/, dist/. Use ':memory:' for tests. */
+  /** Local data directory (SQLite file lives here when no dbUrl is given). */
   dataDir: string;
+  /** libSQL/Turso URL. Defaults to a local file under dataDir. e.g. libsql://db.turso.io */
+  dbUrl?: string;
+  /** Auth token for a remote libSQL/Turso database. */
+  dbToken?: string;
 }
 
 const MIGRATIONS: string[] = [
@@ -45,23 +49,43 @@ const MIGRATIONS: string[] = [
   );`,
 ];
 
-export function openDb(opts: DbOptions): Database.Database {
-  let db: Database.Database;
-  if (opts.dataDir === ':memory:') {
-    db = new Database(':memory:');
-  } else {
-    mkdirSync(opts.dataDir, { recursive: true });
-    db = new Database(join(opts.dataDir, 'wb.sqlite'));
+/**
+ * Open (and migrate) the libSQL database. Works with a local file — the default,
+ * used by the CLI and self-hosting — and with a remote libSQL/Turso URL for
+ * serverless deployments. The same async client covers both.
+ */
+export async function openDb(opts: DbOptions): Promise<Client> {
+  let url = opts.dbUrl;
+  if (!url) {
+    if (opts.dataDir === ':memory:') {
+      url = ':memory:';
+    } else {
+      mkdirSync(opts.dataDir, { recursive: true });
+      url = `file:${resolve(join(opts.dataDir, 'wb.sqlite'))}`;
+    }
+  } else if (url.startsWith('file:')) {
+    // A local libSQL file needs its parent directory to exist first.
+    mkdirSync(dirname(url.slice('file:'.length)), { recursive: true });
   }
-  db.pragma('journal_mode = WAL');
-  db.pragma('foreign_keys = ON');
+  const client = createClient({ url, ...(opts.dbToken ? { authToken: opts.dbToken } : {}) });
 
-  const version = db.pragma('user_version', { simple: true }) as number;
-  for (let v = version; v < MIGRATIONS.length; v++) {
-    db.exec(MIGRATIONS[v]!);
-    db.pragma(`user_version = ${v + 1}`);
+  // Best-effort: enforce foreign keys where the backend honors the pragma.
+  // deleteSite also cleans up children explicitly, so correctness never relies
+  // on cascade being active.
+  try {
+    await client.execute('PRAGMA foreign_keys = ON');
+  } catch {
+    /* remote backends may ignore connection pragmas */
   }
-  return db;
+
+  const version = Number(
+    (await client.execute('PRAGMA user_version')).rows[0]?.user_version ?? 0,
+  );
+  for (let v = version; v < MIGRATIONS.length; v++) {
+    await client.executeMultiple(MIGRATIONS[v]!);
+    await client.execute(`PRAGMA user_version = ${v + 1}`);
+  }
+  return client;
 }
 
 export function assetDir(dataDir: string, siteId: string): string {
@@ -70,8 +94,4 @@ export function assetDir(dataDir: string, siteId: string): string {
 
 export function distDir(dataDir: string, siteId: string): string {
   return join(dataDir, 'dist', siteId);
-}
-
-export function ensureDirFor(filePath: string): void {
-  mkdirSync(dirname(filePath), { recursive: true });
 }

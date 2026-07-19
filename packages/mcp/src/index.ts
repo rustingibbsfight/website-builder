@@ -7,13 +7,19 @@ export { treeOutline } from './outline.js';
 
 export interface StartMcpOptions {
   dataDir: string;
+  dbUrl?: string;
+  dbToken?: string;
   /** Port for the on-demand preview server (default 4400). */
   previewPort?: number;
 }
 
 /** Start the stdio MCP server. This is what `wb mcp` runs. */
 export async function startMcpServer(opts: StartMcpOptions): Promise<void> {
-  const core = new WbCore({ dataDir: opts.dataDir });
+  const core = await WbCore.create({
+    dataDir: opts.dataDir,
+    ...(opts.dbUrl ? { dbUrl: opts.dbUrl } : {}),
+    ...(opts.dbToken ? { dbToken: opts.dbToken } : {}),
+  });
   let previewBase: string | null = null;
 
   const deps: McpDeps = {
