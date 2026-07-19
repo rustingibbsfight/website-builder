@@ -14,6 +14,6 @@ export default defineTool({
     radiusScale: z.enum(['sharp', 'soft', 'round']).optional(),
   }),
   async execute({ siteId, ...patch }) {
-    return wbPut(`/sites/${siteId}/theme`, patch);
+    return wbPut(`/sites/${encodeURIComponent(siteId)}/theme`, patch);
   },
 });

@@ -11,7 +11,8 @@ export default defineTool({
   }),
   async execute({ siteId }) {
     if (!siteId) return wbGet('/sites');
-    const [site, pages] = await Promise.all([wbGet(`/sites/${siteId}`), wbGet(`/sites/${siteId}/pages`)]);
+    const enc = encodeURIComponent(siteId);
+    const [site, pages] = await Promise.all([wbGet(`/sites/${enc}`), wbGet(`/sites/${enc}/pages`)]);
     return { site, pages };
   },
 });

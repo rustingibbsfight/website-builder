@@ -11,6 +11,6 @@ export default defineTool({
     page: z.string().describe('Page id or slug ("index" for the home page)'),
   }),
   async execute({ siteId, page }) {
-    return wbGet(`/sites/${siteId}/pages/${encodeURIComponent(page || 'index')}`);
+    return wbGet(`/sites/${encodeURIComponent(siteId)}/pages/${encodeURIComponent(page || 'index')}`);
   },
 });

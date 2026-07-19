@@ -11,6 +11,6 @@ export default defineTool({
     message: z.string().optional().describe('Commit message (defaults to a timestamped publish message)'),
   }),
   async execute({ siteId, message }) {
-    return wbPost(`/sites/${siteId}/commit`, message ? { message } : {});
+    return wbPost(`/sites/${encodeURIComponent(siteId)}/commit`, message ? { message } : {});
   },
 });

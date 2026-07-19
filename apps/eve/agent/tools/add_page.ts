@@ -16,13 +16,14 @@ export default defineTool({
       .describe('Optional full page tree rooted at a page-root node'),
   }),
   async execute({ siteId, slug, title, description, tree }) {
-    const page = await wbPost<{ id: string }>(`/sites/${siteId}/pages`, {
+    const enc = encodeURIComponent(siteId);
+    const page = await wbPost<{ id: string }>(`/sites/${enc}/pages`, {
       slug,
       title,
       ...(tree ? { tree } : {}),
     });
     if (description) {
-      await wbRequest('PATCH', `/sites/${siteId}/pages/${page.id}`, { meta: { description } });
+      await wbRequest('PATCH', `/sites/${enc}/pages/${encodeURIComponent(page.id)}`, { meta: { description } });
     }
     return page;
   },

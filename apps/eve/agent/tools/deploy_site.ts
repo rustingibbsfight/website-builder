@@ -10,6 +10,6 @@ export default defineTool({
     siteId: z.string(),
   }),
   async execute({ siteId }) {
-    return wbPost(`/sites/${siteId}/deploy`, {});
+    return wbPost(`/sites/${encodeURIComponent(siteId)}/deploy`, {});
   },
 });
