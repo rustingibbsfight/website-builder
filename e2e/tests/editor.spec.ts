@@ -1,0 +1,140 @@
+import { expect, test, type Page } from '@playwright/test';
+
+const BASE = 'http://127.0.0.1:4600';
+
+async function openEditor(page: Page): Promise<void> {
+  await page.goto(`${BASE}/editor/`);
+  await page.getByRole('button', { name: /Breakthrough Medical/ }).click();
+  await expect(page.getByTestId('canvas-frame')).toBeVisible();
+  // wait for the preview iframe to render the hero
+  await expect(page.frameLocator('[data-testid="canvas-frame"]').locator('.c-hero')).toBeVisible();
+}
+
+test.describe('visual editor', () => {
+  test('lists sites and opens the editor with canvas, outline, palette', async ({ page }) => {
+    await openEditor(page);
+    await expect(page.locator('.outline-row').first()).toContainText('page-root');
+    await expect(page.getByTestId('palette-hero')).toBeVisible();
+    await expect(page.locator('.pages li')).toHaveCount(4);
+  });
+
+  test('click-to-select in canvas populates the inspector', async ({ page }) => {
+    await openEditor(page);
+    const frame = page.frameLocator('[data-testid="canvas-frame"]');
+    await frame.locator('.c-hero').click();
+    await expect(page.getByTestId('inspector')).toContainText('hero');
+    // props form generated from the schema
+    await expect(page.getByTestId('prop-headline')).toHaveValue(/Weight loss/);
+  });
+
+  test('editing a prop saves and re-renders the canvas', async ({ page }) => {
+    await openEditor(page);
+    const frame = page.frameLocator('[data-testid="canvas-frame"]');
+    await frame.locator('.c-hero').click();
+    const headline = page.getByTestId('prop-headline');
+    await headline.fill('A new headline from the editor');
+    await headline.blur();
+    await expect(page.locator('.toolbar .status')).toHaveText(/saved/);
+    await expect(
+      page.frameLocator('[data-testid="canvas-frame"]').locator('.wb-hero-copy h1'),
+    ).toHaveText('A new headline from the editor');
+  });
+
+  test('double-click palette inserts into selected container; undo reverts', async ({ page }) => {
+    await openEditor(page);
+    const frame = () => page.frameLocator('[data-testid="canvas-frame"]');
+    const outlineRows = () => page.locator('.outline-row');
+    const before = await outlineRows().count();
+
+    // select the page root via outline, then insert a section
+    await outlineRows().first().click();
+    await page.getByTestId('palette-section').dblclick();
+    await expect(page.locator('.toolbar .status')).toHaveText(/saved/);
+    await expect(outlineRows()).toHaveCount(before + 1);
+    await expect(frame().locator('main > .c-section').last()).toBeVisible();
+
+    await page.getByRole('button', { name: /undo/ }).click();
+    await expect(outlineRows()).toHaveCount(before);
+  });
+
+  test('layout tab edits auto-layout tokens', async ({ page }) => {
+    await openEditor(page);
+    // select the testimonials section (grid) via outline
+    await page.locator('.outline-row', { hasText: 'section' }).nth(0).click();
+    await page.getByRole('button', { name: 'layout', exact: true }).click();
+    await page.getByTestId('layout-direction').selectOption('grid');
+    await expect(page.locator('.toolbar .status')).toHaveText(/saved/);
+  });
+
+  test('style tab sets background token on a section', async ({ page }) => {
+    await openEditor(page);
+    await page.locator('.outline-row', { hasText: 'section' }).nth(0).click();
+    await page.getByRole('button', { name: 'style', exact: true }).click();
+    await page.getByTestId('style-background').selectOption('secondary');
+    await expect(page.locator('.toolbar .status')).toHaveText(/saved/);
+    // undo to keep fixture stable
+    await page.getByRole('button', { name: /undo/ }).click();
+  });
+
+  test('delete node removes it from canvas and outline', async ({ page }) => {
+    await openEditor(page);
+    const frame = page.frameLocator('[data-testid="canvas-frame"]');
+    await frame.locator('.c-featureGrid .c-card').first().click();
+    await expect(page.getByTestId('inspector')).toContainText('card');
+    const before = await page.locator('.outline-row').count();
+    await page.getByTestId('delete-node').click();
+    await expect(page.locator('.outline-row')).toHaveCount(before - 1);
+    await page.getByRole('button', { name: /undo/ }).click();
+    await expect(page.locator('.outline-row')).toHaveCount(before);
+  });
+
+  test('drag from palette onto canvas inserts at the drop point', async ({ page }) => {
+    await openEditor(page);
+    const before = await page.locator('.outline-row').count();
+
+    // HTML5 drag with a real DataTransfer: dragstart on the palette item,
+    // then dragover + drop on the canvas overlay (which appears during drag).
+    const item = page.getByTestId('palette-divider');
+    await item.dispatchEvent('dragstart', { dataTransfer: await page.evaluateHandle(() => new DataTransfer()) });
+    const overlay = page.getByTestId('drag-overlay');
+    await expect(overlay).toBeVisible();
+    const box = (await overlay.boundingBox())!;
+    const x = box.x + box.width / 2;
+    const y = box.y + box.height / 2;
+    const dt = await page.evaluateHandle(() => new DataTransfer());
+    await overlay.dispatchEvent('dragover', { dataTransfer: dt, clientX: x, clientY: y });
+    // give the iframe hit-test roundtrip a beat
+    await page.waitForTimeout(300);
+    await overlay.dispatchEvent('dragover', { dataTransfer: dt, clientX: x, clientY: y });
+    await page.waitForTimeout(200);
+    await overlay.dispatchEvent('drop', { dataTransfer: dt, clientX: x, clientY: y });
+
+    await expect(page.locator('.toolbar .status')).toHaveText(/saved/, { timeout: 10_000 });
+    await expect(page.locator('.outline-row')).toHaveCount(before + 1);
+    await expect(page.locator('.outline-row', { hasText: 'divider' })).toBeVisible();
+    await page.getByRole('button', { name: /undo/ }).click();
+  });
+
+  test('theme dialog rebrands the site live', async ({ page }) => {
+    await openEditor(page);
+    await page.getByRole('button', { name: /Theme/ }).click();
+    const dialog = page.getByTestId('theme-dialog');
+    await expect(dialog).toBeVisible();
+    await dialog.getByTestId('theme-primary').fill('#aa2266');
+    await dialog.getByTestId('theme-save').click();
+    await expect(dialog).not.toBeVisible();
+    const css = await page.evaluate(async () => {
+      const res = await fetch('/sites');
+      const sites = (await res.json()) as Array<{ id: string }>;
+      const cssRes = await fetch(`/preview/${sites[0]!.id}/styles.css`);
+      return cssRes.text();
+    });
+    expect(css).toContain('--color-primary:#aa2266');
+  });
+
+  test('publish button reports success', async ({ page }) => {
+    await openEditor(page);
+    await page.getByRole('button', { name: /Publish/ }).click();
+    await expect(page.locator('.toolbar .status')).toHaveText(/published 4 pages/, { timeout: 15_000 });
+  });
+});

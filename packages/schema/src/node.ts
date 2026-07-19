@@ -23,6 +23,7 @@ export const LayoutSchema = z
   .object({
     direction: z
       .enum(['stack', 'row', 'grid'])
+      .optional()
       .describe('Auto-layout direction: stack (vertical), row (horizontal), grid'),
     gap: SpacingTokenSchema.optional().describe('Gap between children'),
     padding: PaddingSchema.optional().describe('Inner padding (single token or per-side)'),

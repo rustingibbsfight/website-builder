@@ -315,6 +315,7 @@ program
     const port = Number(opts.port);
     await startServer({ dataDir, port, host: '0.0.0.0' });
     console.log(`wb API listening on http://127.0.0.1:${port}`);
+    console.log(`  editor:   http://127.0.0.1:${port}/editor/`);
     console.log(`  openapi:  http://127.0.0.1:${port}/openapi.json`);
     console.log(`  preview:  http://127.0.0.1:${port}/preview/<siteId>/`);
   });

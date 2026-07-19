@@ -15,10 +15,19 @@ export const TreeOpSchema = z.discriminatedUnion('op', [
     .object({
       op: z.literal('update'),
       nodeId: z.string(),
-      props: z.record(z.unknown()).optional().describe('Shallow-merged into existing props'),
-      layout: LayoutSchema.partial().optional().describe('Shallow-merged into existing layout'),
-      style: StyleSchema.partial().optional().describe('Shallow-merged into existing style'),
-      responsive: ResponsiveSchema.optional().describe('Replaces the responsive overrides'),
+      props: z
+        .record(z.unknown())
+        .optional()
+        .describe('Shallow-merged into existing props; a null value deletes that key'),
+      layout: z
+        .record(z.unknown())
+        .optional()
+        .describe('Shallow-merged into existing layout (validated after merge); null deletes a key'),
+      style: z
+        .record(z.unknown())
+        .optional()
+        .describe('Shallow-merged into existing style (validated after merge); null deletes a key'),
+      responsive: ResponsiveSchema.nullable().optional().describe('Replaces the responsive overrides (null clears them)'),
     })
     .strict(),
   z
@@ -101,10 +110,18 @@ function applyOne(root: WbNode, op: TreeOp, ids: Set<string>, hooks: ApplyOpsHoo
     case 'update': {
       const node = findNode(root, op.nodeId);
       if (!node) throw new Error(`node "${op.nodeId}" not found`);
-      if (op.props) node.props = { ...node.props, ...op.props };
-      if (op.layout) node.layout = { ...(node.layout ?? { direction: 'stack' }), ...op.layout };
-      if (op.style) node.style = { ...node.style, ...op.style };
-      if (op.responsive) node.responsive = op.responsive;
+      if (op.props) node.props = mergeClean(node.props, op.props);
+      if (op.layout) {
+        const merged = mergeClean(node.layout ?? {}, op.layout);
+        node.layout = Object.keys(merged).length ? LayoutSchema.parse(merged) : undefined;
+      }
+      if (op.style) {
+        const merged = mergeClean(node.style ?? {}, op.style);
+        node.style = Object.keys(merged).length ? StyleSchema.parse(merged) : undefined;
+      }
+      if (op.responsive !== undefined) {
+        node.responsive = op.responsive === null ? undefined : op.responsive;
+      }
       hooks.validateNode?.(node);
       return;
     }
@@ -139,6 +156,15 @@ function applyOne(root: WbNode, op: TreeOp, ids: Set<string>, hooks: ApplyOpsHoo
       return;
     }
   }
+}
+
+/** Shallow merge where a null patch value deletes the key. */
+function mergeClean<T extends Record<string, unknown>>(base: T, patch: Record<string, unknown>): T {
+  const out: Record<string, unknown> = { ...base, ...patch };
+  for (const key of Object.keys(out)) {
+    if (out[key] === null || out[key] === undefined) delete out[key];
+  }
+  return out as T;
 }
 
 function assertContainer(node: WbNode, hooks: ApplyOpsHooks): void {

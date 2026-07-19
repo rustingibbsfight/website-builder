@@ -10,6 +10,9 @@ import {
   TreeOpSchema,
 } from '@wb/schema';
 import Fastify, { type FastifyInstance } from 'fastify';
+import { existsSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
 import {
   jsonSchemaTransform,
   serializerCompiler,
@@ -31,10 +34,24 @@ const BrandSchema = z
 const SiteIdParams = z.object({ siteId: z.string() });
 const PageParams = z.object({ siteId: z.string(), pageId: z.string() });
 
+/** Locate the built editor SPA without a hard dependency on @wb/editor. */
+function resolveEditorDist(): string | null {
+  try {
+    const require = createRequire(import.meta.url);
+    const pkg = require.resolve('@wb/editor/package.json');
+    const dist = join(dirname(pkg), 'dist');
+    return existsSync(join(dist, 'index.html')) ? dist : null;
+  } catch {
+    return null;
+  }
+}
+
 export interface BuildAppOptions {
   core: WbCore;
   /** Expose swagger/openapi (on by default). */
   openapi?: boolean;
+  /** Path to the built editor SPA (auto-resolved from @wb/editor when omitted). */
+  editorDist?: string;
 }
 
 export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> {
@@ -286,14 +303,48 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     },
   );
 
+  // ── Visual editor SPA ────────────────────────────────────────────────────
+  const editorDist = opts.editorDist ?? resolveEditorDist();
+  app.get('/editor', async (_req, reply) => reply.redirect('/editor/'));
+  app.get('/editor/*', async (req, reply) => {
+    if (!editorDist) {
+      return reply
+        .status(404)
+        .type('text/plain')
+        .send('editor not built — run `pnpm --filter @wb/editor build`');
+    }
+    const rest = ((req.params as Record<string, string>)['*'] ?? '').split('?')[0]!;
+    const { createReadStream, existsSync } = await import('node:fs');
+    const { extname, join, normalize } = await import('node:path');
+    const safe = normalize(rest).replace(/^(\.\.[/\\])+/, '');
+    let filePath = join(editorDist, safe);
+    if (!safe || !existsSync(filePath) || !extname(filePath)) filePath = join(editorDist, 'index.html');
+    if (!existsSync(filePath)) return reply.status(404).send({ error: 'editor build missing' });
+    const mime: Record<string, string> = {
+      '.html': 'text/html; charset=utf-8',
+      '.js': 'text/javascript; charset=utf-8',
+      '.css': 'text/css; charset=utf-8',
+      '.svg': 'image/svg+xml',
+      '.map': 'application/json',
+    };
+    return reply.type(mime[extname(filePath)] ?? 'application/octet-stream').send(createReadStream(filePath));
+  });
+
   // ── Preview ──────────────────────────────────────────────────────────────
   app.get('/preview/:siteId', { schema: { params: SiteIdParams } }, async (req, reply) =>
     reply.redirect(`/preview/${req.params.siteId}/`),
   );
-  app.get('/preview/:siteId/*', { schema: { params: z.object({ siteId: z.string(), '*': z.string() }) } }, async (req, reply) => {
+  app.get('/preview/:siteId/*', {
+    schema: {
+      params: z.object({ siteId: z.string(), '*': z.string() }),
+      querystring: z.object({ editor: z.string().optional() }),
+    },
+  }, async (req, reply) => {
     const { siteId } = req.params;
     const rest = req.params['*'] ?? '';
-    const result = core.renderPreviewPath(siteId, `/${rest}`, `/preview/${siteId}`);
+    const result = core.renderPreviewPath(siteId, `/${rest}`, `/preview/${siteId}`, {
+      editor: req.query.editor === '1',
+    });
     if (!result) return reply.status(404).send({ error: `no page at "/${rest}"` });
     if (result.kind === 'asset') {
       const { createReadStream } = await import('node:fs');

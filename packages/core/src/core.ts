@@ -35,6 +35,7 @@ import type Database from 'better-sqlite3';
 import { copyFileSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { assetDir, distDir, openDb } from './db.js';
+import { EDITOR_PREVIEW_JS } from './editor-script.js';
 import { NotFoundError, ValidationError } from './errors.js';
 import { AssetStore, BuildStore, PageStore, SiteStore, type BuildRecord } from './stores.js';
 
@@ -439,11 +440,14 @@ export class WbCore {
   /**
    * Render a draft page (or the stylesheet) for the live preview.
    * `basePath` (e.g. /preview/<siteId>) prefixes styles/assets/internal links.
+   * With `editor: true`, injects the visual-editor bridge script instead of
+   * the preview nav script (never part of published output).
    */
   renderPreviewPath(
     siteId: string,
     urlPath: string,
     basePath: string,
+    opts: { editor?: boolean } = {},
   ): { kind: 'html' | 'css'; body: string } | { kind: 'asset'; filePath: string; mime: string } | null {
     const site = this.getSite(siteId);
     const pages = this.pages.listForSite(siteId);
@@ -469,10 +473,13 @@ export class WbCore {
     const page = pages.find((p) => normalizeSlug(p.slug) === clean);
     if (!page) return null;
     const resolveAsset = this.previewAssetResolver(assets, basePath);
-    const html = renderPage(site, page, {
-      resolveAsset,
-      bodyExtra: previewNavScript(basePath),
-    }).replace('href="/styles.css"', `href="${basePath}/styles.css"`);
+    const bodyExtra = opts.editor
+      ? `<script>${EDITOR_PREVIEW_JS}</script>`
+      : previewNavScript(basePath);
+    const html = renderPage(site, page, { resolveAsset, bodyExtra }).replace(
+      'href="/styles.css"',
+      `href="${basePath}/styles.css"`,
+    );
     return { kind: 'html', body: html };
   }
 

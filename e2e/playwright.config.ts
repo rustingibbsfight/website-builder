@@ -14,10 +14,18 @@ export default defineConfig({
     baseURL: 'http://127.0.0.1:5173',
     ...(chromiumPath ? { launchOptions: { executablePath: chromiumPath } } : {}),
   },
-  webServer: {
-    command: 'node setup-and-serve.mjs',
-    url: 'http://127.0.0.1:5173/',
-    reuseExistingServer: false,
-    timeout: 60_000,
-  },
+  webServer: [
+    {
+      command: 'node setup-and-serve.mjs',
+      url: 'http://127.0.0.1:5173/',
+      reuseExistingServer: false,
+      timeout: 60_000,
+    },
+    {
+      command: 'node editor-server.mjs',
+      url: 'http://127.0.0.1:4600/health',
+      reuseExistingServer: false,
+      timeout: 60_000,
+    },
+  ],
 });

@@ -137,8 +137,24 @@ pnpm test      # unit + integration tests (schema, components, renderer, core, s
 pnpm e2e       # Playwright: real browser at desktop/tablet/mobile viewports
 ```
 
+## Visual editor (drag & drop)
+
+```bash
+pnpm --filter @wb/editor build   # once (also part of `pnpm build`)
+wb dev                            # then open http://127.0.0.1:4000/editor/
+```
+
+The editor is a React app mounted on the same REST API agents use — every edit is a `TreeOp[]` batch to `/tree/ops`:
+
+- **Canvas** — the live preview in an iframe; click any element to select it (hover/selection outlines come from an editor-only script injected into the preview, never published).
+- **Palette** — drag a component onto the canvas (a drop indicator shows the exact insertion point, computed by hit-testing real rendered layout) or double-click to insert into the selected container.
+- **Outline** — the page tree; drag rows to reorder or nest, click to select.
+- **Inspector** — props form auto-generated from each component's JSON Schema, plus layout (direction/gap/padding/align/columns/max-width), style tokens, and per-breakpoint visibility.
+- **Theme** — brand colors, font stacks, rounding; the whole site restyles live.
+- Undo/redo (⌘Z/⌘⇧Z), viewport toggle (desktop/tablet/mobile), one-click publish.
+
 ## Roadmap
 
-- **Phase 2 — visual editor:** React app on the same API: component palette from `GET /components`, preview iframe (nodes already carry `data-node-id`), props forms generated from JSON Schemas, drag-and-drop emitting the same `TreeOp[]` batches.
 - Slack bot interface (thin adapter over MCP/REST).
+- Responsive per-breakpoint overrides UI in the editor (engine already supports them).
 - More templates; Postgres store option.
