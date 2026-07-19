@@ -40,7 +40,15 @@ export function renderSite(site: Site, pages: Page[], assets: Asset[]): RenderSi
   files.set('styles.css', renderCss(site, trees, resolveAsset));
 
   for (const page of pages) {
-    files.set(pagePath(page.slug), renderPage(site, page, { resolveAsset }));
+    const path = pagePath(page.slug);
+    // Two pages resolving to the same output path (e.g. slug "" and "index",
+    // both → index.html) would otherwise silently overwrite each other.
+    if (files.has(path)) {
+      throw new Error(
+        `duplicate output path "${path}" — two pages map to the same slug (e.g. "" and "index"); slugs must be unique`,
+      );
+    }
+    files.set(path, renderPage(site, page, { resolveAsset }));
     warnings.push(...lintPage(site, page));
   }
 
@@ -72,13 +80,25 @@ function render404(site: Site): string {
 `;
 }
 
+/**
+ * The canonical base URL, stripped of control characters and its trailing
+ * slash. robots.txt is line-oriented plaintext with no escaping, so a newline
+ * in baseUrl would otherwise inject arbitrary crawler directives.
+ */
+function cleanBaseUrl(site: Site): string | undefined {
+  const raw = site.settings.baseUrl;
+  if (!raw) return undefined;
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: intentionally stripping control chars
+  return raw.replace(/[\u0000-\u001f\u007f]/g, '').replace(/\/$/, '');
+}
+
 function robotsTxt(site: Site): string {
-  const base = site.settings.baseUrl?.replace(/\/$/, '');
+  const base = cleanBaseUrl(site);
   return `User-agent: *\nAllow: /\n${base ? `Sitemap: ${base}/sitemap.xml\n` : ''}`;
 }
 
 function sitemapXml(site: Site, pages: Page[]): string | null {
-  const base = site.settings.baseUrl?.replace(/\/$/, '');
+  const base = cleanBaseUrl(site);
   if (!base) return null;
   const urls = pages
     .filter((p) => !p.meta.noIndex)

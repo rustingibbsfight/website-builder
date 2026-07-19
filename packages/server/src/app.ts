@@ -20,7 +20,7 @@ import {
   validatorCompiler,
   type ZodTypeProvider,
 } from 'fastify-type-provider-zod';
-import { z } from 'zod';
+import { z, ZodError } from 'zod';
 
 const BrandSchema = z
   .object({
@@ -95,6 +95,15 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     if (rawErr instanceof ValidationError) {
       return reply.status(422).send({ error: rawErr.message, details: rawErr.details });
     }
+    // A raw ZodError from a `.parse()` inside a handler/service (e.g. the JSON
+    // asset body, or a full-theme parse in setTheme merge=false) is a bad
+    // request, not a server fault — map it to 422 like our own ValidationError.
+    if (rawErr instanceof ZodError) {
+      return reply.status(422).send({
+        error: 'validation failed',
+        details: rawErr.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.message}`),
+      });
+    }
     const err = rawErr as Error & { validation?: unknown; statusCode?: number };
     if (err.validation) return reply.status(400).send({ error: err.message });
     // Honor a framework error's own 4xx status (body-too-large, unsupported
@@ -152,7 +161,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
         params: SiteIdParams,
         body: z
           .object({
-            name: z.string().optional(),
+            name: z.string().min(1).optional(),
             settings: z
               .object({ locale: z.string().optional(), favicon: z.string().optional(), baseUrl: z.string().optional() })
               .optional(),

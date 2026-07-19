@@ -195,6 +195,25 @@ describe('input validation hardening', () => {
     expect(asset.statusCode).toBe(404);
   });
 
+  it('maps a malformed JSON asset body to 422, not 500', async () => {
+    const siteId = await makeSite();
+    // Missing `base64` → a raw ZodError from the in-handler .parse(); the error
+    // handler must classify it as a client error (422), never a 500.
+    const res = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteId}/assets`,
+      payload: { filename: 'x.png', mime: 'image/png' },
+    });
+    expect(res.statusCode).toBe(422);
+    expect((res.json() as { error: string }).error).toMatch(/validation/i);
+  });
+
+  it('rejects an empty site name on PATCH with a 400', async () => {
+    const siteId = await makeSite();
+    const res = await app.inject({ method: 'PATCH', url: `/sites/${siteId}`, payload: { name: '' } });
+    expect(res.statusCode).toBe(400); // route schema now requires min(1)
+  });
+
   it('accepts a large base64 asset upload (over Fastify’s 1 MiB default body limit)', async () => {
     const siteId = await makeSite();
     // ~2 MB of raw bytes → ~2.7 MB base64 body; must not 413/500.

@@ -1,6 +1,15 @@
 import type { Client, InStatement, Row } from '@libsql/client';
 import type { Asset, Page, PageMeta, Site, SiteSettings, Theme, WbNode } from '@wb/schema';
 
+/** A partial site update; only the present keys are written (header/footer null clears them). */
+export interface SiteFieldUpdate {
+  name?: string;
+  theme?: Theme;
+  settings?: SiteSettings;
+  header?: WbNode | null;
+  footer?: WbNode | null;
+}
+
 const str = (v: unknown): string => String(v);
 const numOrNull = (v: unknown): number | undefined => (v === null || v === undefined ? undefined : Number(v));
 
@@ -65,19 +74,41 @@ export class SiteStore {
     await this.db.execute({ sql: 'UPDATE sites SET updated_at=? WHERE id=?', args: [updatedAt, id] });
   }
 
-  async update(site: Site): Promise<void> {
-    await this.db.execute({
-      sql: `UPDATE sites SET name=?, theme_json=?, header_json=?, footer_json=?, settings_json=?, updated_at=? WHERE id=?`,
-      args: [
-        site.name,
-        JSON.stringify(site.theme),
-        site.header ? JSON.stringify(site.header) : null,
-        site.footer ? JSON.stringify(site.footer) : null,
-        JSON.stringify(site.settings),
-        site.updatedAt,
-        site.id,
-      ],
-    });
+  /**
+   * Update only the columns a given edit actually touches, so concurrent edits
+   * to disjoint parts of a site (e.g. one request setting the theme, another
+   * setting the header) can't clobber each other via a full-row rewrite. A key
+   * being present means "write it"; for header/footer a null value clears the
+   * column. updated_at is always bumped.
+   */
+  async updateFields(id: string, fields: SiteFieldUpdate, updatedAt: string): Promise<boolean> {
+    const cols: string[] = [];
+    const args: (string | null)[] = [];
+    if (fields.name !== undefined) {
+      cols.push('name=?');
+      args.push(fields.name);
+    }
+    if (fields.theme !== undefined) {
+      cols.push('theme_json=?');
+      args.push(JSON.stringify(fields.theme));
+    }
+    if (fields.settings !== undefined) {
+      cols.push('settings_json=?');
+      args.push(JSON.stringify(fields.settings));
+    }
+    if ('header' in fields) {
+      cols.push('header_json=?');
+      args.push(fields.header ? JSON.stringify(fields.header) : null);
+    }
+    if ('footer' in fields) {
+      cols.push('footer_json=?');
+      args.push(fields.footer ? JSON.stringify(fields.footer) : null);
+    }
+    cols.push('updated_at=?');
+    args.push(updatedAt);
+    args.push(id);
+    const res = await this.db.execute({ sql: `UPDATE sites SET ${cols.join(', ')} WHERE id=?`, args });
+    return res.rowsAffected > 0;
   }
 
   async get(id: string): Promise<Site | null> {
@@ -250,5 +281,9 @@ export class BuildStore {
       createdAt: str(r.created_at),
       manifest: JSON.parse(str(r.manifest_json)) as BuildRecord['manifest'],
     };
+  }
+
+  async deleteForSite(siteId: string): Promise<void> {
+    await this.db.execute({ sql: 'DELETE FROM builds WHERE site_id=?', args: [siteId] });
   }
 }

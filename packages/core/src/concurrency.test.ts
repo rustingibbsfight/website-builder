@@ -104,3 +104,55 @@ describe('WbCore concurrent page ops surface a conflict, never lose data', () =>
     core.close();
   });
 });
+
+describe('site edits to disjoint fields never clobber each other', () => {
+  it('a concurrent theme edit and header edit both persist', async () => {
+    const core = await WbCore.create({ dataDir });
+    const site = await core.createSite('Clinic');
+
+    // Both handlers read the same snapshot, then write different columns.
+    await Promise.all([
+      core.setTheme(site.id, { colors: { primary: '#123456' } as never }),
+      core.setChrome(site.id, 'header', { type: 'header', props: {} }),
+    ]);
+
+    const after = await core.getSite(site.id);
+    // Full-row rewrites would have dropped one of these; scoped writes keep both.
+    expect(after.theme.colors.primary).toBe('#123456');
+    expect(after.header).toBeTruthy();
+    expect(after.header?.type).toBe('header');
+    core.close();
+  });
+
+  it('setting the footer leaves a concurrently-set name intact', async () => {
+    const core = await WbCore.create({ dataDir });
+    const site = await core.createSite('Original');
+    await Promise.all([
+      core.updateSite(site.id, { name: 'Renamed' }),
+      core.setChrome(site.id, 'footer', { type: 'footer', props: {} }),
+    ]);
+    const after = await core.getSite(site.id);
+    expect(after.name).toBe('Renamed');
+    expect(after.footer?.type).toBe('footer');
+    core.close();
+  });
+});
+
+describe('deleteSite cleans up builds rows', () => {
+  it('removes a site\'s builds so none dangle after deletion', async () => {
+    const core = await WbCore.create({ dataDir });
+    const site = await core.createSiteFromTemplate('breakthrough-medical', 'Doomed');
+    await core.publishSite(site.id);
+    expect((await core.listBuilds(site.id)).length).toBeGreaterThan(0);
+
+    await core.deleteSite(site.id);
+
+    // A fresh site reusing storage must not inherit the old builds. Query the
+    // builds table directly (listBuilds 404s once the site row is gone).
+    const db = await openDb({ dataDir });
+    const remaining = await db.execute({ sql: 'SELECT COUNT(*) AS n FROM builds WHERE site_id=?', args: [site.id] });
+    expect(Number(remaining.rows[0]!.n)).toBe(0);
+    db.close();
+    core.close();
+  });
+});

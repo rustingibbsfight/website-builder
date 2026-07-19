@@ -183,13 +183,23 @@ export class WbCore {
     if (site.header) this.validateTree(site.header);
     if (site.footer) this.validateTree(site.footer);
 
+    const seenSlugs = new Set<string>();
     const pages: Page[] = input.pages.map((p, i) => {
       const tree = remap(p.tree);
       this.validateTree(tree);
+      // Validate slugs here too — importSite is a public bulk-import entry point,
+      // and an unchecked slug like "../../etc" would escape the dist directory
+      // at publish time (pagePath → writeDist). Mirror addPage's rule.
+      const slug = normalizeSlug(p.slug);
+      if (slug !== '' && !SLUG_RE.test(slug)) {
+        throw new ValidationError(`invalid slug "${p.slug}" — use lowercase letters, digits, hyphens`);
+      }
+      if (seenSlugs.has(slug)) throw new ValidationError(`duplicate slug "${slug || '(home)'}" in import`);
+      seenSlugs.add(slug);
       return {
         id: newId(),
         siteId,
-        slug: normalizeSlug(p.slug),
+        slug,
         title: p.title,
         meta: p.meta ?? {},
         tree,
@@ -268,10 +278,19 @@ export class WbCore {
 
   async updateSite(siteId: string, patch: { name?: string; settings?: Partial<SiteSettings> }): Promise<Site> {
     const site = await this.getSite(siteId);
-    if (patch.name) site.name = patch.name;
-    if (patch.settings) site.settings = { ...site.settings, ...patch.settings };
+    const fields: { name?: string; settings?: SiteSettings } = {};
+    if (patch.name) {
+      site.name = patch.name;
+      fields.name = patch.name;
+    }
+    if (patch.settings) {
+      site.settings = { ...site.settings, ...patch.settings };
+      fields.settings = site.settings;
+    }
     site.updatedAt = nowIso();
-    await this.sites.update(site);
+    // Write only name/settings — never the theme/header/footer columns a
+    // concurrent edit may be changing.
+    await this.sites.updateFields(siteId, fields, site.updatedAt);
     return site;
   }
 
@@ -281,6 +300,7 @@ export class WbCore {
     // active (remote libSQL backends may not honor connection pragmas).
     for (const asset of await this.assets.listForSite(siteId)) await this.assets.delete(asset.id);
     for (const page of await this.pages.listForSite(siteId)) await this.pages.delete(page.id);
+    await this.builds.deleteForSite(siteId);
     await this.sites.delete(siteId);
     await this.storage.deleteSite(siteId);
     rmSync(distDir(this.dataDir, siteId), { recursive: true, force: true });
@@ -298,21 +318,26 @@ export class WbCore {
       : patch;
     site.theme = ThemeSchema.parse(next);
     site.updatedAt = nowIso();
-    await this.sites.update(site);
+    // Scoped to theme_json only — a concurrent header/footer/name edit survives.
+    await this.sites.updateFields(siteId, { theme: site.theme }, site.updatedAt);
     return site;
   }
 
   async setChrome(siteId: string, which: 'header' | 'footer', node: NodeInput | null): Promise<Site> {
     const site = await this.getSite(siteId);
+    let value: WbNode | null;
     if (node === null) {
       delete site[which];
+      value = null;
     } else {
       const tree = materializeNode(node, new Set());
       this.validateTree(tree);
       site[which] = tree;
+      value = tree;
     }
     site.updatedAt = nowIso();
-    await this.sites.update(site);
+    // Scoped to just the one chrome column being changed.
+    await this.sites.updateFields(siteId, { [which]: value }, site.updatedAt);
     return site;
   }
 

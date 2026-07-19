@@ -22,6 +22,9 @@ const errText = (err: unknown) => ({
   isError: true,
 });
 
+/** Cap fetched assets so a hostile/oversized URL can't exhaust memory. */
+const MAX_ASSET_BYTES = 20 * 1024 * 1024;
+
 const BrandShape = z
   .object({
     brandName: z.string().optional(),
@@ -225,7 +228,14 @@ export function buildMcpServer(deps: McpDeps): McpServer {
         if (url) {
           const res = await fetch(url);
           if (!res.ok) return errText(new Error(`fetch ${url} failed: ${res.status}`));
+          const declared = Number(res.headers.get('content-length') ?? '');
+          if (Number.isFinite(declared) && declared > MAX_ASSET_BYTES) {
+            return errText(new Error(`asset too large: ${declared} bytes (max ${MAX_ASSET_BYTES})`));
+          }
           content = new Uint8Array(await res.arrayBuffer());
+          if (content.byteLength > MAX_ASSET_BYTES) {
+            return errText(new Error(`asset too large: ${content.byteLength} bytes (max ${MAX_ASSET_BYTES})`));
+          }
           resolvedMime ??= res.headers.get('content-type') ?? 'application/octet-stream';
         } else if (base64) {
           content = Buffer.from(base64, 'base64');

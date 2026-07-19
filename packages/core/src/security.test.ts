@@ -1,6 +1,7 @@
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { DEFAULT_THEME, type SiteInput } from '@wb/schema';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WbCore } from './core.js';
 import { assetDir } from './db.js';
@@ -58,6 +59,48 @@ describe('deleteSite only removes its own directories', () => {
     expect((await core.listSites()).map((s) => s.id)).toEqual([b.id]);
     // Child rows are gone too (no orphans).
     await expect(core.getPage(a.id, '')).rejects.toThrow();
+  });
+});
+
+describe('importSite validates slugs (no dist path escape via bulk import)', () => {
+  const baseInput = (slug: string): SiteInput => ({
+    name: 'Imported',
+    theme: DEFAULT_THEME,
+    pages: [{ slug, title: 'P', tree: { id: 'r', type: 'page-root', props: {}, children: [] } }],
+  });
+
+  it('rejects a traversal slug before anything is persisted', async () => {
+    for (const slug of ['../../../tmp/pwn', 'has/slash', '..', 'UPPER', 'a b']) {
+      await expect(core.importSite(baseInput(slug))).rejects.toThrow(/invalid slug/);
+    }
+    // Nothing was written for the failed imports.
+    expect(await core.listSites()).toHaveLength(0);
+  });
+
+  it('rejects duplicate slugs in one import', async () => {
+    const input: SiteInput = {
+      name: 'Dupes',
+      theme: DEFAULT_THEME,
+      pages: [
+        { slug: 'a', title: 'A', tree: { id: 'r', type: 'page-root', props: {}, children: [] } },
+        { slug: 'a', title: 'A2', tree: { id: 'r', type: 'page-root', props: {}, children: [] } },
+      ],
+    };
+    await expect(core.importSite(input)).rejects.toThrow(/duplicate slug/);
+  });
+
+  it('accepts valid slugs including empty (home) and "index"', async () => {
+    const input: SiteInput = {
+      name: 'Good',
+      theme: DEFAULT_THEME,
+      pages: [
+        { slug: 'index', title: 'Home', tree: { id: 'r', type: 'page-root', props: {}, children: [] } },
+        { slug: 'about-us', title: 'About', tree: { id: 'r', type: 'page-root', props: {}, children: [] } },
+      ],
+    };
+    const site = await core.importSite(input);
+    const slugs = (await core.listPages(site.id)).map((p) => p.slug).sort();
+    expect(slugs).toEqual(['', 'about-us']);
   });
 });
 
