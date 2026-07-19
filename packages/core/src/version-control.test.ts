@@ -56,17 +56,17 @@ describe('GitHubVersionControl', () => {
     });
 
     const paths = gh.calls.map((c) => `${c.method} ${c.path}`);
-    // repo check → 404, then create under the authed user
-    expect(paths).toContain('GET /repos/clinicowner/wb-site-breakthrough-medical');
+    // repo check → 404, then create under the authed user (name discriminated by siteId)
+    expect(paths).toContain('GET /repos/clinicowner/wb-site-breakthrough-medical-s1');
     expect(paths).toContain('POST /user/repos');
     // empty repo → bootstrap via Contents API before the git data API
-    expect(paths).toContain('PUT /repos/clinicowner/wb-site-breakthrough-medical/contents/.wb-init');
+    expect(paths).toContain('PUT /repos/clinicowner/wb-site-breakthrough-medical-s1/contents/.wb-init');
     // git data API sequence
     expect(paths.filter((p) => p.endsWith('/git/blobs')).length).toBe(4); // site.json, README, 2 dist files
-    expect(paths).toContain('POST /repos/clinicowner/wb-site-breakthrough-medical/git/trees');
-    expect(paths).toContain('POST /repos/clinicowner/wb-site-breakthrough-medical/git/commits');
+    expect(paths).toContain('POST /repos/clinicowner/wb-site-breakthrough-medical-s1/git/trees');
+    expect(paths).toContain('POST /repos/clinicowner/wb-site-breakthrough-medical-s1/git/commits');
     // branch updated (never a bare ref-create — bootstrap already made it)
-    expect(paths).toContain('PATCH /repos/clinicowner/wb-site-breakthrough-medical/git/refs/heads/main');
+    expect(paths).toContain('PATCH /repos/clinicowner/wb-site-breakthrough-medical-s1/git/refs/heads/main');
 
     // the commit's tree includes source at root and build under dist/
     const treeCall = gh.calls.find((c) => c.path.endsWith('/git/trees'))!;
@@ -83,8 +83,67 @@ describe('GitHubVersionControl', () => {
     const commitCall = gh.calls.find((c) => c.path.endsWith('/git/commits'))!;
     expect((commitCall.body as { parents: string[] }).parents).toEqual(['init_1']);
 
-    expect(result.repo).toBe('clinicowner/wb-site-breakthrough-medical');
+    expect(result.repo).toBe('clinicowner/wb-site-breakthrough-medical-s1');
     expect(result.commitUrl).toContain('commit_1');
+  });
+
+  it('retries the commit onto a fresh parent when the branch moved (422 non-fast-forward)', async () => {
+    // A racing deploy advances the branch: the first PATCH is a non-fast-forward
+    // 422, and the re-read tip returns a new parent. The retry must succeed.
+    let patchCount = 0;
+    let commitCount = 0;
+    const commitParents: unknown[] = [];
+    const fetchFn = (async (url: string | URL | Request, init?: RequestInit) => {
+      const u = new URL(String(url));
+      const method = init?.method ?? 'GET';
+      const body = init?.body ? JSON.parse(init.body as string) : undefined;
+      const json = (status: number, data: unknown) =>
+        new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
+      if (u.pathname.match(/^\/repos\/[^/]+\/[^/]+$/) && method === 'GET') return json(200, { name: 'repo' });
+      if (u.pathname.match(/\/git\/ref\/heads\//) && method === 'GET') {
+        // First tip read → parent_1; after the failed PATCH → parent_2.
+        return json(200, { object: { sha: patchCount === 0 ? 'parent_1' : 'parent_2' } });
+      }
+      if (u.pathname.endsWith('/git/blobs')) return json(201, { sha: 'blob' });
+      if (u.pathname.endsWith('/git/trees')) return json(201, { sha: 'tree_1' });
+      if (u.pathname.endsWith('/git/commits')) {
+        commitCount++;
+        commitParents.push(body.parents);
+        return json(201, { sha: `commit_${commitCount}`, html_url: `https://github.com/o/r/commit/commit_${commitCount}` });
+      }
+      if (u.pathname.match(/\/git\/refs\/heads\//) && method === 'PATCH') {
+        patchCount++;
+        return patchCount === 1 ? json(422, { message: 'Update is not a fast forward' }) : json(200, {});
+      }
+      return json(500, { message: `unexpected ${method} ${u.pathname}` });
+    }) as unknown as typeof fetch;
+
+    const vc = new GitHubVersionControl({ token: 't', owner: 'o', fetchFn });
+    const result = await vc.commitSite({ siteId: 's', siteName: 'X', source: {}, files: new Map([['index.html', 'a']]), message: 'm' });
+    expect(patchCount).toBe(2); // failed once, then succeeded
+    expect(commitCount).toBe(2); // commit re-created onto the fresh parent
+    expect(commitParents).toEqual([['parent_1'], ['parent_2']]);
+    expect(result.commitSha).toBe('commit_2');
+  });
+
+  it('surfaces the GitHub error message when a branch update ultimately fails', async () => {
+    const fetchFn = (async (url: string | URL | Request, init?: RequestInit) => {
+      const u = new URL(String(url));
+      const method = init?.method ?? 'GET';
+      const json = (status: number, data: unknown) =>
+        new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
+      if (u.pathname.match(/^\/repos\/[^/]+\/[^/]+$/) && method === 'GET') return json(200, { name: 'repo' });
+      if (u.pathname.match(/\/git\/ref\/heads\//) && method === 'GET') return json(200, { object: { sha: 'p' } });
+      if (u.pathname.endsWith('/git/blobs')) return json(201, { sha: 'b' });
+      if (u.pathname.endsWith('/git/trees')) return json(201, { sha: 't' });
+      if (u.pathname.endsWith('/git/commits')) return json(201, { sha: 'c', html_url: 'h' });
+      if (u.pathname.match(/\/git\/refs\/heads\//) && method === 'PATCH') return json(403, { message: 'Resource not accessible' });
+      return json(500, { message: 'unexpected' });
+    }) as unknown as typeof fetch;
+    const vc = new GitHubVersionControl({ token: 't', owner: 'o', fetchFn });
+    await expect(
+      vc.commitSite({ siteId: 's', siteName: 'X', source: {}, files: new Map([['index.html', 'a']]), message: 'm' }),
+    ).rejects.toThrow(/403.*Resource not accessible/);
   });
 
   it('appends a commit onto an existing repo (parent + patch ref)', async () => {

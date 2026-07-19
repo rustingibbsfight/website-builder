@@ -1,4 +1,4 @@
-import { slugifyProject } from './publish-target.js';
+import { projectNameFor } from './publish-target.js';
 
 /**
  * Version control for published sites: on each deploy, commit the site's source
@@ -55,7 +55,11 @@ export class GitHubVersionControl implements VersionControl {
     this.branch = cfg.branch ?? 'main';
   }
 
-  private async gh<T = unknown>(method: string, path: string, body?: unknown): Promise<{ status: number; data: T }> {
+  private async gh<T = unknown>(
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<{ status: number; data: T; message?: string }> {
     const res = await this.fetchFn(`https://api.github.com${path}`, {
       method,
       headers: {
@@ -68,15 +72,28 @@ export class GitHubVersionControl implements VersionControl {
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
     const text = await res.text();
-    const data = (text ? JSON.parse(text) : {}) as T;
-    return { status: res.status, data };
+    let data: T;
+    try {
+      data = (text ? JSON.parse(text) : {}) as T;
+    } catch {
+      // A proxy/error page (HTML, empty) must not crash the flow — surface it as a message.
+      data = {} as T;
+      return { status: res.status, data, message: text.slice(0, 300) };
+    }
+    // GitHub error bodies carry a human-readable `message` (and sometimes `errors`).
+    const d = data as { message?: string; errors?: Array<{ message?: string }> };
+    const message =
+      d?.message != null
+        ? [d.message, ...(d.errors ?? []).map((e) => e?.message).filter(Boolean)].join('; ')
+        : undefined;
+    return { status: res.status, data, message };
   }
 
   private async ensureRepo(repo: string): Promise<void> {
     const existing = await this.gh(`GET`, `/repos/${this.cfg.owner}/${repo}`);
     if (existing.status === 200) return;
     if (existing.status !== 404) {
-      throw new Error(`github: checking repo failed (${existing.status})`);
+      throw new Error(`github: checking repo ${this.cfg.owner}/${repo} failed (${existing.status})${existing.message ? `: ${existing.message}` : ''}`);
     }
     // Create under the authenticated user, or under an org if the owner differs.
     const me = await this.gh<{ login: string }>('GET', '/user');
@@ -88,10 +105,14 @@ export class GitHubVersionControl implements VersionControl {
       auto_init: false,
       description: 'Version-controlled website — source + build, published by wb.',
     });
-    if (created.status !== 201) {
-      const msg = (created.data as { message?: string }).message ?? created.status;
-      throw new Error(`github: creating repo ${this.cfg.owner}/${repo} failed: ${msg}`);
+    if (created.status === 201) return;
+    // 422 on create means the repo already exists (a concurrent deploy of the
+    // same site raced us) — that's success, not failure. Confirm it's really there.
+    if (created.status === 422) {
+      const recheck = await this.gh('GET', `/repos/${this.cfg.owner}/${repo}`);
+      if (recheck.status === 200) return;
     }
+    throw new Error(`github: creating repo ${this.cfg.owner}/${repo} failed (${created.status})${created.message ? `: ${created.message}` : ''}`);
   }
 
   /**
@@ -103,7 +124,10 @@ export class GitHubVersionControl implements VersionControl {
    */
   private async baseCommit(repo: string): Promise<string> {
     const owner = this.cfg.owner;
-    const ref = await this.gh<{ object?: { sha: string } }>('GET', `/repos/${owner}/${repo}/git/ref/heads/${this.branch}`);
+    const readTip = () =>
+      this.gh<{ object?: { sha: string } }>('GET', `/repos/${owner}/${repo}/git/ref/heads/${this.branch}`);
+
+    const ref = await readTip();
     if (ref.status === 200 && ref.data.object?.sha) return ref.data.object.sha;
 
     const init = await this.gh<{ commit?: { sha: string } }>(
@@ -115,8 +139,13 @@ export class GitHubVersionControl implements VersionControl {
         branch: this.branch,
       },
     );
-    if (!init.data.commit?.sha) throw new Error(`github: repository init failed (${init.status})`);
-    return init.data.commit.sha;
+    if (init.data.commit?.sha) return init.data.commit.sha;
+
+    // A concurrent deploy may have bootstrapped the repo between our ref read and
+    // this PUT (422 "sha wasn't supplied" / already exists). Re-read the tip.
+    const after = await readTip();
+    if (after.status === 200 && after.data.object?.sha) return after.data.object.sha;
+    throw new Error(`github: repository init failed (${init.status})${init.message ? `: ${init.message}` : ''}`);
   }
 
   async commitSite(input: {
@@ -126,10 +155,10 @@ export class GitHubVersionControl implements VersionControl {
     files: Map<string, string | Uint8Array>;
     message: string;
   }): Promise<VersionControlResult> {
-    const repo = slugifyProject(input.siteName, this.cfg.repoPrefix ?? 'wb-site-');
+    const repo = projectNameFor(input.siteName, input.siteId, this.cfg.repoPrefix ?? 'wb-site-');
     const owner = this.cfg.owner;
     await this.ensureRepo(repo);
-    const parentSha = await this.baseCommit(repo);
+    let parentSha = await this.baseCommit(repo);
 
     // The commit is a full snapshot: source at the root, build under dist/.
     const blobs: GhBlob[] = [
@@ -157,28 +186,46 @@ export class GitHubVersionControl implements VersionControl {
     }
 
     const treeRes = await this.gh<{ sha: string }>('POST', `/repos/${owner}/${repo}/git/trees`, { tree });
-    if (!treeRes.data.sha) throw new Error(`github: tree create failed (${treeRes.status})`);
+    if (!treeRes.data.sha) throw new Error(`github: tree create failed (${treeRes.status})${treeRes.message ? `: ${treeRes.message}` : ''}`);
 
-    const commit = await this.gh<{ sha: string; html_url: string }>('POST', `/repos/${owner}/${repo}/git/commits`, {
-      message: input.message,
-      tree: treeRes.data.sha,
-      parents: [parentSha],
-    });
-    if (!commit.data.sha) throw new Error(`github: commit create failed (${commit.status})`);
+    // Create the commit and advance the branch. If another deploy of the same
+    // site advanced the branch between our tip-read and the PATCH, GitHub rejects
+    // the fast-forward (422). Re-read the tip, re-parent the commit onto it, and
+    // retry — the blobs and tree are immutable, so only the commit is remade.
+    let lastMessage = '';
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const commit = await this.gh<{ sha: string; html_url: string }>('POST', `/repos/${owner}/${repo}/git/commits`, {
+        message: input.message,
+        tree: treeRes.data.sha,
+        parents: [parentSha],
+      });
+      if (!commit.data.sha) throw new Error(`github: commit create failed (${commit.status})${commit.message ? `: ${commit.message}` : ''}`);
 
-    const patched = await this.gh('PATCH', `/repos/${owner}/${repo}/git/refs/heads/${this.branch}`, {
-      sha: commit.data.sha,
-      force: false,
-    });
-    if (patched.status >= 300) throw new Error(`github: updating branch failed (${patched.status})`);
-
-    return {
-      provider: 'github',
-      repo: `${owner}/${repo}`,
-      repoUrl: `https://github.com/${owner}/${repo}`,
-      commitSha: commit.data.sha,
-      commitUrl: commit.data.html_url ?? `https://github.com/${owner}/${repo}/commit/${commit.data.sha}`,
-    };
+      const patched = await this.gh('PATCH', `/repos/${owner}/${repo}/git/refs/heads/${this.branch}`, {
+        sha: commit.data.sha,
+        force: false,
+      });
+      if (patched.status < 300) {
+        return {
+          provider: 'github',
+          repo: `${owner}/${repo}`,
+          repoUrl: `https://github.com/${owner}/${repo}`,
+          commitSha: commit.data.sha,
+          commitUrl: commit.data.html_url ?? `https://github.com/${owner}/${repo}/commit/${commit.data.sha}`,
+        };
+      }
+      lastMessage = `${patched.status}${patched.message ? `: ${patched.message}` : ''}`;
+      // Non-fast-forward / conflict → refresh the parent and try again.
+      if (patched.status === 422 || patched.status === 409) {
+        const tip = await this.gh<{ object?: { sha: string } }>('GET', `/repos/${owner}/${repo}/git/ref/heads/${this.branch}`);
+        if (tip.status === 200 && tip.data.object?.sha) {
+          parentSha = tip.data.object.sha;
+          continue;
+        }
+      }
+      break;
+    }
+    throw new Error(`github: updating branch failed (${lastMessage})`);
   }
 }
 
