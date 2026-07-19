@@ -69,10 +69,15 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
   // ── Canvas messaging ───────────────────────────────────────────────────────
   useEffect(() => {
     const onMessage = (e: MessageEvent) => {
+      // The preview iframe is same-origin; ignore messages from anywhere else.
+      if (e.origin !== window.location.origin) return;
       const d = e.data as { type?: string; nodeId?: string; containerId?: string | null; index?: number };
       if (d.type === 'wb:clicked' && d.nodeId) setSelectedId(d.nodeId);
       if (d.type === 'wb:ready' && selectedId) {
-        frameRef.current?.contentWindow?.postMessage({ type: 'wb:select-node', nodeId: selectedId }, '*');
+        frameRef.current?.contentWindow?.postMessage(
+          { type: 'wb:select-node', nodeId: selectedId },
+          window.location.origin,
+        );
       }
       if (d.type === 'wb:drop-target') {
         dropTarget.current = d.containerId ? { containerId: d.containerId, index: d.index ?? 0 } : null;
@@ -84,7 +89,7 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
 
   const selectNode = useCallback((nodeId: string | null) => {
     setSelectedId(nodeId);
-    frameRef.current?.contentWindow?.postMessage({ type: 'wb:select-node', nodeId }, '*');
+    frameRef.current?.contentWindow?.postMessage({ type: 'wb:select-node', nodeId }, window.location.origin);
   }, []);
 
   // ── Mutations ──────────────────────────────────────────────────────────────
@@ -216,14 +221,14 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
     const rect = iframe.getBoundingClientRect();
     iframe.contentWindow?.postMessage(
       { type: 'wb:hittest', x: e.clientX - rect.left, y: e.clientY - rect.top, containerIds },
-      '*',
+      window.location.origin,
     );
   };
 
   const overlayDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     const target = dropTarget.current;
-    frameRef.current?.contentWindow?.postMessage({ type: 'wb:clear-indicator' }, '*');
+    frameRef.current?.contentWindow?.postMessage({ type: 'wb:clear-indicator' }, window.location.origin);
     const current = drag;
     setDrag(null);
     if (!target || !current) return;
@@ -346,7 +351,9 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
               data-testid="drag-overlay"
               onDragOver={overlayDragOver}
               onDrop={(e) => void overlayDrop(e)}
-              onDragLeave={() => frameRef.current?.contentWindow?.postMessage({ type: 'wb:clear-indicator' }, '*')}
+              onDragLeave={() =>
+                frameRef.current?.contentWindow?.postMessage({ type: 'wb:clear-indicator' }, window.location.origin)
+              }
             />
           )}
         </div>

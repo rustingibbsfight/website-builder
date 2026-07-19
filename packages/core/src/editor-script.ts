@@ -24,7 +24,8 @@ indicator.style.display='none';
 document.body.appendChild(indicator);
 
 function nodeEl(el){return el&&el.closest?el.closest('[data-node-id]'):null}
-function send(msg){parent.postMessage(msg,'*')}
+// Preview and editor are same-origin; target the exact origin, never '*'.
+function send(msg){parent.postMessage(msg,location.origin)}
 
 document.addEventListener('click',function(e){
   e.preventDefault();e.stopPropagation();
@@ -85,6 +86,7 @@ function hittest(x,y,containerIds){
 }
 
 addEventListener('message',function(e){
+  if(e.origin!==location.origin)return; // ignore cross-origin senders
   var d=e.data||{};
   if(d.type==='wb:select-node'){
     setSelected(d.nodeId);

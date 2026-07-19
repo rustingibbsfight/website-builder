@@ -372,7 +372,13 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
       '.svg': 'image/svg+xml',
       '.map': 'application/json',
     };
-    return reply.type(mime[extname(filePath)] ?? 'application/octet-stream').send(createReadStream(filePath));
+    // The editor drives authenticated mutations; deny cross-origin framing so
+    // it can't be clickjacked.
+    return reply
+      .type(mime[extname(filePath)] ?? 'application/octet-stream')
+      .header('x-frame-options', 'SAMEORIGIN')
+      .header('content-security-policy', "frame-ancestors 'self'")
+      .send(createReadStream(filePath));
   });
 
   // ── Preview ──────────────────────────────────────────────────────────────
@@ -400,8 +406,33 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
         .header('x-content-type-options', 'nosniff')
         .send(result.body);
     }
-    const type = result.kind === 'html' ? 'text/html; charset=utf-8' : 'text/css; charset=utf-8';
-    return reply.type(type).send(result.body);
+    if (result.kind === 'html') {
+      // Preview is same-origin with the authenticated API, and the htmlEmbed
+      // component renders its content unescaped. A strict nonce-based CSP means
+      // only our own injected scripts (which carry `result.nonce`) run; any
+      // <script>/onerror/javascript: an htmlEmbed slips in is blocked, so it
+      // can't ride the session cookie. Media/img/frame stay permissive so real
+      // previews (external images, video embeds) still render.
+      const csp = [
+        "default-src 'self'",
+        `script-src 'nonce-${result.nonce}'`,
+        "style-src 'self' 'unsafe-inline'",
+        'img-src * data: blob:',
+        'font-src * data:',
+        'frame-src *',
+        'media-src *',
+        "connect-src 'self'",
+        "base-uri 'none'",
+        "object-src 'none'",
+        "frame-ancestors 'self'",
+      ].join('; ');
+      return reply
+        .type('text/html; charset=utf-8')
+        .header('content-security-policy', csp)
+        .header('x-content-type-options', 'nosniff')
+        .send(result.body);
+    }
+    return reply.type('text/css; charset=utf-8').send(result.body);
   });
 
   return app;

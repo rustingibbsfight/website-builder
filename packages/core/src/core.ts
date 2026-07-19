@@ -31,6 +31,7 @@ import {
 } from '@wb/schema';
 import { buildBreakthroughMedical, TEMPLATE_META, type BrandOverrides } from '@wb/template-breakthrough-medical';
 import type { Client } from '@libsql/client';
+import { randomBytes } from 'node:crypto';
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { assetDir, distDir, openDb } from './db.js';
@@ -653,7 +654,8 @@ export class WbCore {
     basePath: string,
     opts: { editor?: boolean } = {},
   ): Promise<
-    | { kind: 'html' | 'css'; body: string }
+    | { kind: 'html'; body: string; nonce: string }
+    | { kind: 'css'; body: string }
     | { kind: 'asset'; body: Buffer; mime: string }
     | null
   > {
@@ -682,12 +684,19 @@ export class WbCore {
     const page = pages.find((p) => normalizeSlug(p.slug) === clean);
     if (!page) return null;
     const resolveAsset = this.previewAssetResolver(assets, basePath);
-    const bodyExtra = opts.editor ? `<script>${EDITOR_PREVIEW_JS}</script>` : previewNavScript(basePath);
-    const html = renderPage(site, page, { resolveAsset, bodyExtra }).replace(
+    // Per-response nonce so ONLY our trusted inline scripts (editor bridge / nav
+    // shim / video facade) run under the preview's strict CSP — an htmlEmbed's
+    // injected <script> never carries it and is blocked. The nonce is returned
+    // so the HTTP layer can set the matching script-src.
+    const nonce = randomBytes(16).toString('base64');
+    const bodyExtra = opts.editor
+      ? `<script nonce="${nonce}">${EDITOR_PREVIEW_JS}</script>`
+      : previewNavScript(basePath, nonce);
+    const html = renderPage(site, page, { resolveAsset, bodyExtra, nonce }).replace(
       'href="/styles.css"',
       `href="${basePath}/styles.css"`,
     );
-    return { kind: 'html', body: html };
+    return { kind: 'html', body: html, nonce };
   }
 
   private previewAssetResolver(assets: Asset[], basePath: string) {
@@ -716,8 +725,8 @@ export class WbCore {
 }
 
 /** Rewrite links in preview so navigation stays inside the preview prefix. Never published. */
-function previewNavScript(basePath: string): string {
-  return `<script>document.addEventListener('click',function(e){var a=e.target.closest('a[href^="/"]');if(!a)return;var p=a.getAttribute('href');if(p.indexOf(${JSON.stringify(basePath)})===0)return;e.preventDefault();location.href=${JSON.stringify(basePath)}+(p==='/'?'/':p)});</script>`;
+function previewNavScript(basePath: string, nonce: string): string {
+  return `<script nonce="${nonce}">document.addEventListener('click',function(e){var a=e.target.closest('a[href^="/"]');if(!a)return;var p=a.getAttribute('href');if(p.indexOf(${JSON.stringify(basePath)})===0)return;e.preventDefault();location.href=${JSON.stringify(basePath)}+(p==='/'?'/':p)});</script>`;
 }
 
 /** Reduce a filename to a safe basename: word chars/dot/hyphen only, no dot-segments. */

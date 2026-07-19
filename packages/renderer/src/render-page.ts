@@ -11,6 +11,14 @@ export interface RenderPageOptions {
   resolveAsset: RenderCtx['resolveAsset'];
   /** Extra HTML injected before </body> (preview editor hooks). */
   bodyExtra?: string;
+  /**
+   * CSP nonce for the renderer's own trusted inline scripts (the video facade).
+   * When set, the preview serves a strict `script-src 'nonce-…'` CSP so that an
+   * htmlEmbed's injected <script> — which never carries the nonce — cannot run.
+   * Omitted for static publish (no CSP there; the caller injects the nonce into
+   * any bodyExtra script itself).
+   */
+  nonce?: string;
 }
 
 export function pageBodyClass(slug: string): string {
@@ -77,7 +85,8 @@ export function renderPage(site: Site, page: Page, opts: RenderPageOptions): str
   const header = site.header ? renderNodeHtml(site.header, ctx) : '';
   const main = renderNodeHtml(page.tree, ctx);
   const footer = site.footer ? renderNodeHtml(site.footer, ctx) : '';
-  const script = usesVideo ? `<script>${VIDEO_FACADE_JS}</script>` : '';
+  const nonceAttr = opts.nonce ? ` nonce="${escapeHtml(opts.nonce)}"` : '';
+  const script = usesVideo ? `<script${nonceAttr}>${VIDEO_FACADE_JS}</script>` : '';
 
   return `<!doctype html>
 <html lang="${escapeHtml(site.settings.locale)}">
