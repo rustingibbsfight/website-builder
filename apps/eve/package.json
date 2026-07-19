@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Eve — the wb website agent (Vercel eve framework, Slack via Vercel Connect)",
+  "description": "Eve \u2014 the wb website agent (Vercel eve framework, Slack via Vercel Connect)",
   "imports": {
     "#*": "./agent/*"
   },
@@ -29,6 +29,6 @@
     "vitest": "^3.0.5"
   },
   "engines": {
-    "node": ">=22"
+    "node": "24.x"
   }
 }
