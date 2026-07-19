@@ -73,3 +73,5 @@ jobs:
         working-directory: apps/eve
       - run: vercel deploy --prod --token=${{ secrets.VERCEL_TOKEN }}
         working-directory: apps/eve
+        env:
+          VERCEL_USE_EXPERIMENTAL_FRAMEWORKS: '1'

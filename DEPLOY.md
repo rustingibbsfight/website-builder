@@ -10,26 +10,32 @@ With `vercel`, `turso`, and `wrangler` logged in:
 ./scripts/setup-cloud.sh
 ```
 
-The script is idempotent — it provisions the Turso DB and R2 bucket, wires every env var, deploys both apps, and prints the final Slack paste. It stops and tells you exactly what to do at the three things that can't be automated:
+The script is idempotent — it provisions the Turso DB and R2 bucket, wires every env var, and deploys both apps. Eve is a [Vercel eve](https://eve.dev) agent (same pattern as the weekly-rx-form agent): the model runs through Vercel's **AI Gateway** (no Anthropic key) and Slack is provisioned by **Vercel Connect** (no Slack app, bot token, or signing secret to manage). The script stops and tells you exactly what to do at the two things it can't automate:
 
 | It needs | Where you get it | Pass as |
 |---|---|---|
 | R2 S3 credentials | Cloudflare dashboard → R2 → Manage R2 API Tokens (Object Read & Write) | `WB_S3_ACCESS_KEY_ID`, `WB_S3_SECRET_ACCESS_KEY`, `WB_S3_ENDPOINT` |
 | Vercel API token | vercel.com/account/tokens (lets the API deploy finished sites live) | `WB_VERCEL_TOKEN` |
-| Anthropic API key | console.anthropic.com | `ANTHROPIC_API_KEY` |
-| Slack app | api.slack.com/apps → *From a manifest* → paste `apps/eve/slack-manifest.yaml` → install | `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET` |
 
 So a full run typically looks like:
 
 ```bash
 WB_S3_ACCESS_KEY_ID=… WB_S3_SECRET_ACCESS_KEY=… \
 WB_S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com \
-WB_VERCEL_TOKEN=… ANTHROPIC_API_KEY=… \
-SLACK_BOT_TOKEN=xoxb-… SLACK_SIGNING_SECRET=… \
+WB_VERCEL_TOKEN=… \
 ./scripts/setup-cloud.sh
 ```
 
-Final step (printed by the script): paste `https://<eve-deployment>/api/slack/events` into the Slack app's **Event Subscriptions → Request URL**, then `/invite @eve`.
+Final step (printed by the script, ~1 minute, interactive):
+
+```bash
+cd apps/eve
+vercel connect create slack --triggers      # installs the Slack app; prints a UID
+vercel connect detach <uid> --yes
+vercel connect attach <uid> --triggers --trigger-path /eve/v1/slack --yes
+```
+
+Then `/invite @eve`.
 
 ## Verify
 

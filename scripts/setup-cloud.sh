@@ -94,50 +94,36 @@ API_URL="$(cd "$API_DIR" && vercel deploy --prod --yes | tail -1)"
 bold "  wb API live: $API_URL"
 bold "  editor:      $API_URL/editor/"
 
-# ── 5. Deploy Eve ───────────────────────────────────────────────────────────
+# ── 5. Deploy Eve (Vercel eve framework; Slack via Vercel Connect) ──────────
 step "Deploying Eve (Slack agent)"
-if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-  die "ANTHROPIC_API_KEY is unset — re-run with ANTHROPIC_API_KEY=… (console.anthropic.com)"
-fi
-SLACK_BOT_TOKEN="${SLACK_BOT_TOKEN:-}"
-SLACK_SIGNING_SECRET="${SLACK_SIGNING_SECRET:-}"
-if [ -z "$SLACK_BOT_TOKEN" ] || [ -z "$SLACK_SIGNING_SECRET" ]; then
-  cat <<EOF
-
-  ── MANUAL STEP (Slack app) ──────────────────────────────────────────────
-  1. https://api.slack.com/apps → Create New App → From a manifest
-     → paste apps/eve/slack-manifest.yaml → Install to workspace
-  2. Grab the Bot token (xoxb-…) and Signing secret
-  3. Re-run this script with SLACK_BOT_TOKEN=… SLACK_SIGNING_SECRET=…
-  ─────────────────────────────────────────────────────────────────────────
-EOF
-  die "missing SLACK_BOT_TOKEN / SLACK_SIGNING_SECRET"
-fi
-
 (cd "$EVE_DIR" && vercel link --yes >/dev/null)
 for kv in \
-  "ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY" \
-  "SLACK_BOT_TOKEN=$SLACK_BOT_TOKEN" \
-  "SLACK_SIGNING_SECRET=$SLACK_SIGNING_SECRET" \
   "WB_API_URL=$API_URL" \
   "WB_API_TOKEN=$WB_API_TOKEN"; do
   set_env "$EVE_DIR" "${kv%%=*}" "${kv#*=}"
 done
-EVE_URL="$(cd "$EVE_DIR" && vercel deploy --prod --yes | tail -1)"
+EVE_URL="$(cd "$EVE_DIR" && VERCEL_USE_EXPERIMENTAL_FRAMEWORKS=1 vercel deploy --prod --yes | tail -1)"
 bold "  Eve live: $EVE_URL"
 
-# ── 6. Final hookup ─────────────────────────────────────────────────────────
+# ── 6. Slack hookup (Vercel Connect — no Slack app to configure by hand) ────
 cat <<EOF
 
-$(bold "✔ Deployed. One last paste:")
+$(bold "✔ Deployed. Wire up Slack (interactive, ~1 minute):")
 
-  Slack app → Event Subscriptions → Request URL:
-    $EVE_URL/api/slack/events
-  (Slack sends a challenge; Eve answers automatically. Then /invite @eve)
+  cd $EVE_DIR
+  vercel connect create slack --triggers      # installs the app; prints a UID (e.g. slack/wb-eve)
+  vercel connect detach <uid> --yes
+  vercel connect attach <uid> --triggers --trigger-path /eve/v1/slack --yes
+  # if the UID isn't slack/wb-eve:  vercel env add SLACK_CONNECT_UID  (then redeploy)
+
+Then in Slack:  /invite @eve
 
 Smoke test:
   curl -H "Authorization: Bearer $WB_API_TOKEN" $API_URL/health
   In Slack:  @eve create a Breakthrough Medical site and deploy it
 
 Editor: $API_URL/editor/  (sign in with the WB_API_TOKEN above)
+
+Notes: the model runs via Vercel AI Gateway (no ANTHROPIC_API_KEY needed);
+Slack credentials live in Vercel Connect (no bot token / signing secret).
 EOF

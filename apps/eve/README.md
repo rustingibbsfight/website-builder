@@ -1,82 +1,62 @@
-# Eve — the Slack website agent
+# Eve — the wb website agent
 
-Eve is a Slack bot on Vercel that builds, edits, and deploys websites by driving the wb REST API through Claude tool-use. Mention `@eve` in a channel or DM her:
+A [Vercel eve](https://eve.dev) agent that builds, edits, and deploys websites through the wb API — the same pattern as the clinic's weekly-rx-form-signature-agent. Mention `@eve` in Slack:
 
-> **@eve** spin up a Breakthrough Medical site with primary color #0e7c66 and publish it
+> **@eve** spin up a Breakthrough Medical site with primary color #0e7c66 and ship it
 
-Eve creates the branded site from the template, edits pages on request ("swap the hero headline", "add a pricing page with 3 tiers"), rethemes live, publishes static builds, and deploys — replying in the thread with the site id and results. Follow-ups in the same thread keep full context.
+Eve creates the branded site from the template, edits pages on request, rethemes live, and deploys to a public URL — replying in the thread. Thread context, Slack credentials, retries, and the agent loop are all handled by the eve framework; this repo only defines the agent.
 
-## Architecture
+## Project layout
 
 ```
-Slack ── Events API ──▶ Vercel fn /api/slack/events
-                          │  verify signature → ack <3s → waitUntil(...)
-                          ▼
-                    Claude (claude-opus-4-8, adaptive thinking, tool runner)
-                          │  10 tools: create_site, edit_page, set_theme,
-                          │  publish_site, deploy_site, …
-                          ▼
-                    wb REST API (your `wb dev` host)  ──▶ static builds → host
+agent/
+  agent.ts             # model config (anthropic/claude-opus-4-8 via AI Gateway)
+  instructions.md      # Eve's identity, workflow, Slack style, compliance rules
+  tools/               # typed wb tools: create_site, edit_page, set_theme,
+                       #   deploy_site (live URL), list_components, …
+  channels/slack.ts    # Slack channel (Vercel Connect credentials)
+  channels/eve.ts      # HTTP/dev-REPL channel
+lib/wb.ts              # wb REST client (WB_API_URL + WB_API_TOKEN bearer)
 ```
 
-Eve is stateless: conversation context is rebuilt from the Slack thread on every event, and all site state lives in the wb backend. The Vercel function acknowledges Slack within 3 seconds and finishes the agent run in the background (`waitUntil`), then posts the reply to the thread.
+## Setup
 
-## Deploy
+Requires Node 24+ locally and the Vercel CLI. (In the monorepo, `pnpm build` only typechecks; Vercel builds with `eve build` via the `vercel-build` script.)
 
-### 1. Host the wb API somewhere Eve can reach
-
-Vercel functions can't run SQLite, so the builder backend runs wherever you like (a small VM, Fly.io, Render…):
+### 1. Deploy
 
 ```bash
-WB_API_TOKEN=$(openssl rand -hex 24) wb dev --port 4000   # expose as https://wb.yourdomain.com
+cd apps/eve
+vercel link                                   # create/link a project (e.g. "wb-eve")
+VERCEL_USE_EXPERIMENTAL_FRAMEWORKS=1 vercel deploy --prod
 ```
 
-Set `WB_API_TOKEN` on the wb host and give Eve the same value — with it set, the API rejects unauthenticated requests, and the browser editor asks for the token on first visit.
+### 2. Slack via Vercel Connect — no Slack app to configure by hand
 
-### 2. Create the Slack app
-
-https://api.slack.com/apps → *Create New App* → *From a manifest* → paste `slack-manifest.yaml`. Install to the workspace and note:
-- **Bot token** (`xoxb-…`) — *OAuth & Permissions*
-- **Signing secret** — *Basic Information*
-
-### 3. Deploy to Vercel
-
-From the repo root (monorepo — set the project's Root Directory to `apps/eve`):
+Connect provisions and installs the Slack app, holds the bot token, and verifies inbound webhooks:
 
 ```bash
-vercel link
-vercel env add ANTHROPIC_API_KEY
-vercel env add SLACK_BOT_TOKEN
-vercel env add SLACK_SIGNING_SECRET
-vercel env add WB_API_URL           # e.g. https://wb.yourdomain.com
-vercel env add WB_DEPLOY_ADAPTER    # optional: static | vercel | netlify | cloudflare
-vercel deploy --prod
+vercel connect create slack --triggers        # installs the app; prints a UID like slack/wb-eve
+vercel connect detach <uid> --yes             # re-point the trigger at eve's Slack route
+vercel connect attach <uid> --triggers --trigger-path /eve/v1/slack --yes
 ```
 
-### 4. Point Slack at the deployment
+Then `/invite @eve` in the channel. If the UID isn't exactly `slack/wb-eve`, set `SLACK_CONNECT_UID`.
 
-*Event Subscriptions* → Request URL → `https://<your-deployment>/api/slack/events`. Slack sends a `url_verification` challenge; Eve answers it automatically. Then invite the bot: `/invite @eve`.
+### 3. Environment variables
 
-## Environment variables
+```bash
+vercel env add WB_API_URL        # the wb API deployment, e.g. https://wb-api-….vercel.app
+vercel env add WB_API_TOKEN      # the wb API's WB_API_TOKEN
+# optional: SLACK_CONNECT_UID    # if the Connect UID differs from slack/wb-eve
+```
 
-| Var | Required | Purpose |
-|---|---|---|
-| `ANTHROPIC_API_KEY` | ✅ | Claude API key |
-| `SLACK_BOT_TOKEN` | ✅ | `xoxb-…` bot token |
-| `SLACK_SIGNING_SECRET` | ✅ | Request signature verification |
-| `WB_API_URL` | ✅ | Base URL of the wb REST API |
-| `WB_API_TOKEN` | ✅* | The wb server's `WB_API_TOKEN` (*required when the API has auth enabled — it should) |
-| `ANTHROPIC_MODEL` | — | Defaults to `claude-opus-4-8` |
-| `WB_DEPLOY_ADAPTER` | — | Default adapter for `deploy_site` |
+No Anthropic key and no Slack tokens: the model runs through Vercel's AI Gateway, and Slack credentials live in Vercel Connect.
 
 ## Development
 
 ```bash
-pnpm --filter @wb/eve build   # typecheck
-pnpm --filter @wb/eve test    # unit + integration (spins up a real wb server)
+pnpm --filter @wb/eve build      # typecheck against the real eve types
+pnpm --filter @wb/eve test       # wb client integration test (spins up a real wb server)
+npm run dev                      # eve dev REPL (Node 24)
 ```
-
-Notes:
-- Agent runs are capped at 25 tool iterations and 300s of function time (`vercel.json`); long builds report partial progress rather than hanging Slack.
-- Slack redelivers events we don't ack in 3s — retries carry `x-slack-retry-num` and are dropped since the original is already processing.
-- The system prompt keeps Breakthrough Medical copy compliance rules in front of the model (no outcome claims).

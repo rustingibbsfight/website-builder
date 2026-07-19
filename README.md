@@ -183,7 +183,7 @@ The editor is a React app mounted on the same REST API agents use — every edit
 
 ## Eve — the Slack bot
 
-`apps/eve` is a Vercel-deployable Slack bot: mention `@eve` and Claude drives the wb REST API through tool-use — *"spin up a Breakthrough Medical site with primary color #0e7c66 and publish it"* becomes a threaded Slack conversation that ends with a built site. Setup (Slack app manifest included) in [apps/eve/README.md](apps/eve/README.md).
+`apps/eve` is a [Vercel eve](https://eve.dev)-framework agent (the same pattern as the clinic's weekly-rx-form agent): mention `@eve` and Claude drives the wb REST API through typed tools — *"spin up a Breakthrough Medical site with primary color #0e7c66 and ship it"* becomes a threaded Slack conversation that ends with a live URL. Slack credentials are provisioned by Vercel Connect (`vercel connect create slack`) and the model runs via Vercel AI Gateway — no Slack app config, no API keys to manage. Setup in [apps/eve/README.md](apps/eve/README.md).
 
 ## Roadmap
 

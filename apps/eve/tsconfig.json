@@ -1,10 +1,13 @@
 {
-  "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "noEmit": true,
-    "module": "ESNext",
+    "target": "ES2022",
+    "module": "esnext",
     "moduleResolution": "bundler",
-    "types": ["node"]
+    "types": ["node"],
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": true
   },
-  "include": ["src", "api"]
+  "include": ["agent/**/*.ts", "lib/**/*.ts"]
 }
