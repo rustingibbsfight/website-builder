@@ -1,0 +1,24 @@
+{
+  "name": "@wb/eve",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Eve — Slack-front-ended website agent on Vercel, driving the wb API through Claude",
+  "scripts": {
+    "build": "tsc -p .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.110.0",
+    "@vercel/functions": "^2.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.1",
+    "@vercel/node": "^5.1.8",
+    "@wb/core": "workspace:*",
+    "@wb/server": "workspace:*",
+    "fastify": "^5.10.0",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}

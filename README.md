@@ -153,8 +153,11 @@ The editor is a React app mounted on the same REST API agents use — every edit
 - **Theme** — brand colors, font stacks, rounding; the whole site restyles live.
 - Undo/redo (⌘Z/⌘⇧Z), viewport toggle (desktop/tablet/mobile), one-click publish.
 
+## Eve — the Slack bot
+
+`apps/eve` is a Vercel-deployable Slack bot: mention `@eve` and Claude drives the wb REST API through tool-use — *"spin up a Breakthrough Medical site with primary color #0e7c66 and publish it"* becomes a threaded Slack conversation that ends with a built site. Setup (Slack app manifest included) in [apps/eve/README.md](apps/eve/README.md).
+
 ## Roadmap
 
-- Slack bot interface (thin adapter over MCP/REST).
 - Responsive per-breakpoint overrides UI in the editor (engine already supports them).
-- More templates; Postgres store option.
+- More templates; Postgres store option; auth on the wb API.

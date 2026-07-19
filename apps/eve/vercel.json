@@ -1,0 +1,7 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/slack/events.ts": { "maxDuration": 300 },
+    "api/health.ts": { "maxDuration": 10 }
+  }
+}
