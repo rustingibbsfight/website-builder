@@ -1,0 +1,75 @@
+# Continuous deploy: test everything, then redeploy wb-api and Eve to Vercel.
+#
+# One-time setup (after scripts/setup-cloud.sh has created the Vercel projects):
+#   GitHub repo → Settings → Secrets and variables → Actions → add:
+#     VERCEL_TOKEN            a Vercel API token
+#     VERCEL_ORG_ID           from apps/wb-api/.vercel/project.json after `vercel link`
+#     VERCEL_WB_API_PROJECT_ID  "projectId" from apps/wb-api/.vercel/project.json
+#     VERCEL_EVE_PROJECT_ID     "projectId" from apps/eve/.vercel/project.json
+#   (Runtime env vars live in the Vercel projects, not here.)
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - run: pnpm -r test
+
+  deploy-wb-api:
+    needs: test
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' }}
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_WB_API_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: npm i -g vercel
+      - run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+        working-directory: apps/wb-api
+      - run: vercel deploy --prod --token=${{ secrets.VERCEL_TOKEN }}
+        working-directory: apps/wb-api
+
+  deploy-eve:
+    needs: test
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' }}
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_EVE_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: npm i -g vercel
+      - run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+        working-directory: apps/eve
+      - run: vercel deploy --prod --token=${{ secrets.VERCEL_TOKEN }}
+        working-directory: apps/eve

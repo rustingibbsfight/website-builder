@@ -127,6 +127,8 @@ or in `.mcp.json` / Claude Desktop config:
 
 A typical agent session: `create_site {template: "breakthrough-medical", brand: {...}}` → `get_page` → `edit_page` → `preview_site {screenshot: true}` → `publish_site`. A Slack bot wired to Claude with this MCP server gets one-command website deployment for free.
 
+> **Deploying the whole platform?** See [DEPLOY.md](DEPLOY.md) — `./scripts/setup-cloud.sh` provisions Turso + R2 + both Vercel apps in one run.
+
 ## Deploying
 
 **Live targets (fully serverless, no CLI needed):** configure `WB_PUBLISH_TARGET` and `wb deploy <siteId>` / `POST /sites/:id/deploy` / Eve's `deploy_site` renders the site in memory and pushes it live via provider HTTP APIs, returning the public URL:
