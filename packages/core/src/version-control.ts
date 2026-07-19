@@ -78,11 +78,11 @@ export class GitHubVersionControl implements VersionControl {
     if (existing.status !== 404) {
       throw new Error(`github: checking repo failed (${existing.status})`);
     }
-    // Determine whether the owner is the authenticated user or an org.
+    // Create under the authenticated user, or under an org if the owner differs.
     const me = await this.gh<{ login: string }>('GET', '/user');
     const isSelf = me.status === 200 && me.data.login?.toLowerCase() === this.cfg.owner.toLowerCase();
     const createPath = isSelf ? '/user/repos' : `/orgs/${this.cfg.owner}/repos`;
-    const created = await this.gh(createPath.startsWith('/user') ? 'POST' : 'POST', createPath, {
+    const created = await this.gh('POST', createPath, {
       name: repo,
       private: this.cfg.private ?? true,
       auto_init: false,
@@ -92,6 +92,31 @@ export class GitHubVersionControl implements VersionControl {
       const msg = (created.data as { message?: string }).message ?? created.status;
       throw new Error(`github: creating repo ${this.cfg.owner}/${repo} failed: ${msg}`);
     }
+  }
+
+  /**
+   * Return the current tip commit of the branch, initializing an empty repo
+   * first if needed. The Git Data API (blobs/trees/commits) rejects a repo that
+   * has never had an initial commit (409 "Git Repository is empty"), so a fresh
+   * repo is bootstrapped with one Contents-API write, which creates the default
+   * branch. Every subsequent commit then has a real parent.
+   */
+  private async baseCommit(repo: string): Promise<string> {
+    const owner = this.cfg.owner;
+    const ref = await this.gh<{ object?: { sha: string } }>('GET', `/repos/${owner}/${repo}/git/ref/heads/${this.branch}`);
+    if (ref.status === 200 && ref.data.object?.sha) return ref.data.object.sha;
+
+    const init = await this.gh<{ commit?: { sha: string } }>(
+      'PUT',
+      `/repos/${owner}/${repo}/contents/.wb-init`,
+      {
+        message: 'Initialize repository',
+        content: Buffer.from('Initialized by wb.\n').toString('base64'),
+        branch: this.branch,
+      },
+    );
+    if (!init.data.commit?.sha) throw new Error(`github: repository init failed (${init.status})`);
+    return init.data.commit.sha;
   }
 
   async commitSite(input: {
@@ -104,6 +129,7 @@ export class GitHubVersionControl implements VersionControl {
     const repo = slugifyProject(input.siteName, this.cfg.repoPrefix ?? 'wb-site-');
     const owner = this.cfg.owner;
     await this.ensureRepo(repo);
+    const parentSha = await this.baseCommit(repo);
 
     // The commit is a full snapshot: source at the root, build under dist/.
     const blobs: GhBlob[] = [
@@ -118,12 +144,8 @@ export class GitHubVersionControl implements VersionControl {
       );
     }
 
-    // Is there an existing commit on the branch?
-    const ref = await this.gh<{ object?: { sha: string } }>('GET', `/repos/${owner}/${repo}/git/ref/heads/${this.branch}`);
-    const parentSha = ref.status === 200 ? ref.data.object?.sha : undefined;
-
-    // Create blobs, then a fresh tree (no base_tree → each commit is a clean
-    // snapshot; deleted pages don't linger).
+    // Blobs, then a fresh tree (no base_tree → each commit is a clean snapshot;
+    // deleted pages and the .wb-init placeholder don't linger).
     const tree: Array<{ path: string; mode: '100644'; type: 'blob'; sha: string }> = [];
     for (const b of blobs) {
       const blob = await this.gh<{ sha: string }>('POST', `/repos/${owner}/${repo}/git/blobs`, {
@@ -140,26 +162,15 @@ export class GitHubVersionControl implements VersionControl {
     const commit = await this.gh<{ sha: string; html_url: string }>('POST', `/repos/${owner}/${repo}/git/commits`, {
       message: input.message,
       tree: treeRes.data.sha,
-      parents: parentSha ? [parentSha] : [],
+      parents: [parentSha],
     });
     if (!commit.data.sha) throw new Error(`github: commit create failed (${commit.status})`);
 
-    // Point the branch at the new commit (create the ref on first push).
-    if (parentSha) {
-      await this.gh('PATCH', `/repos/${owner}/${repo}/git/refs/heads/${this.branch}`, {
-        sha: commit.data.sha,
-        force: false,
-      });
-    } else {
-      const createRef = await this.gh('POST', `/repos/${owner}/${repo}/git/refs`, {
-        ref: `refs/heads/${this.branch}`,
-        sha: commit.data.sha,
-      });
-      if (createRef.status !== 201) {
-        // Repo may have been auto-initialized; fall back to updating the ref.
-        await this.gh('PATCH', `/repos/${owner}/${repo}/git/refs/heads/${this.branch}`, { sha: commit.data.sha, force: true });
-      }
-    }
+    const patched = await this.gh('PATCH', `/repos/${owner}/${repo}/git/refs/heads/${this.branch}`, {
+      sha: commit.data.sha,
+      force: false,
+    });
+    if (patched.status >= 300) throw new Error(`github: updating branch failed (${patched.status})`);
 
     return {
       provider: 'github',
@@ -174,8 +185,7 @@ export class GitHubVersionControl implements VersionControl {
 function readme(siteName: string, siteId: string): string {
   return `# ${siteName}
 
-Version-controlled website built with [wb](https://github.com/). Each commit is a
-published snapshot.
+Version-controlled website built with wb. Each commit is a published snapshot.
 
 - \`site.json\` — the editable source (theme, pages, component trees). Restorable.
 - \`dist/\` — the rendered static build for this commit.

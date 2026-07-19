@@ -8,7 +8,8 @@ import { createVersionControl, GitHubVersionControl, type VersionControl } from 
 /** A scripted GitHub API — record calls, respond per endpoint. */
 function fakeGitHub(opts: { repoExists?: boolean } = {}) {
   const calls: Array<{ method: string; path: string; body: unknown }> = [];
-  let refExists = opts.repoExists ?? false; // simulate an empty repo on first push
+  // The branch ref exists once the repo has been initialized (Contents PUT).
+  let refExists = opts.repoExists ?? false;
   const fetchFn = (async (url: string | URL | Request, init?: RequestInit) => {
     const u = new URL(String(url));
     const method = init?.method ?? 'GET';
@@ -22,13 +23,17 @@ function fakeGitHub(opts: { repoExists?: boolean } = {}) {
     }
     if (u.pathname === '/user' && method === 'GET') return json(200, { login: 'clinicowner' });
     if (u.pathname === '/user/repos' && method === 'POST') return json(201, { name: body.name });
-    if (u.pathname.endsWith('/git/blobs')) return json(201, { sha: `blob_${calls.length}` });
-    if (u.pathname.endsWith('/git/trees')) return json(201, { sha: 'tree_1' });
-    if (u.pathname.endsWith('/git/commits')) return json(201, { sha: 'commit_1', html_url: 'https://github.com/clinicowner/repo/commit/commit_1' });
     if (u.pathname.match(/\/git\/ref\/heads\//) && method === 'GET') {
       return refExists ? json(200, { object: { sha: 'parent_1' } }) : json(404, { message: 'Not Found' });
     }
-    if (u.pathname.endsWith('/git/refs') && method === 'POST') { refExists = true; return json(201, {}); }
+    // Contents-API bootstrap of an empty repo → creates the default branch.
+    if (u.pathname.endsWith('/contents/.wb-init') && method === 'PUT') {
+      refExists = true;
+      return json(201, { commit: { sha: 'init_1' } });
+    }
+    if (u.pathname.endsWith('/git/blobs')) return json(201, { sha: `blob_${calls.length}` });
+    if (u.pathname.endsWith('/git/trees')) return json(201, { sha: 'tree_1' });
+    if (u.pathname.endsWith('/git/commits')) return json(201, { sha: 'commit_1', html_url: 'https://github.com/clinicowner/repo/commit/commit_1' });
     if (u.pathname.match(/\/git\/refs\/heads\//) && method === 'PATCH') return json(200, {});
     return json(500, { message: `unexpected ${method} ${u.pathname}` });
   }) as unknown as typeof fetch;
@@ -54,12 +59,14 @@ describe('GitHubVersionControl', () => {
     // repo check → 404, then create under the authed user
     expect(paths).toContain('GET /repos/clinicowner/wb-site-breakthrough-medical');
     expect(paths).toContain('POST /user/repos');
+    // empty repo → bootstrap via Contents API before the git data API
+    expect(paths).toContain('PUT /repos/clinicowner/wb-site-breakthrough-medical/contents/.wb-init');
     // git data API sequence
     expect(paths.filter((p) => p.endsWith('/git/blobs')).length).toBe(4); // site.json, README, 2 dist files
     expect(paths).toContain('POST /repos/clinicowner/wb-site-breakthrough-medical/git/trees');
     expect(paths).toContain('POST /repos/clinicowner/wb-site-breakthrough-medical/git/commits');
-    // empty repo → create ref (not patch)
-    expect(paths).toContain('POST /repos/clinicowner/wb-site-breakthrough-medical/git/refs');
+    // branch updated (never a bare ref-create — bootstrap already made it)
+    expect(paths).toContain('PATCH /repos/clinicowner/wb-site-breakthrough-medical/git/refs/heads/main');
 
     // the commit's tree includes source at root and build under dist/
     const treeCall = gh.calls.find((c) => c.path.endsWith('/git/trees'))!;
@@ -72,9 +79,9 @@ describe('GitHubVersionControl', () => {
     const svgBlob = gh.calls.find((c) => c.path.endsWith('/git/blobs') && (c.body as { encoding: string }).encoding === 'base64');
     expect(svgBlob).toBeTruthy();
 
-    // commit parents empty on first push
+    // first commit's parent is the bootstrap init commit
     const commitCall = gh.calls.find((c) => c.path.endsWith('/git/commits'))!;
-    expect((commitCall.body as { parents: string[] }).parents).toEqual([]);
+    expect((commitCall.body as { parents: string[] }).parents).toEqual(['init_1']);
 
     expect(result.repo).toBe('clinicowner/wb-site-breakthrough-medical');
     expect(result.commitUrl).toContain('commit_1');
