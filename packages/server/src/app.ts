@@ -1,7 +1,7 @@
 import multipart from '@fastify/multipart';
 import swagger from '@fastify/swagger';
 import { componentJsonSchema, componentSummary, getComponent, listComponents } from '@wb/components';
-import { NotFoundError, ValidationError, WbCore } from '@wb/core';
+import { ConflictError, NotFoundError, ValidationError, WbCore } from '@wb/core';
 import {
   NodeInputSchema,
   OpsError,
@@ -63,7 +63,9 @@ export interface BuildAppOptions {
 
 export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> {
   const { core } = opts;
-  const app = Fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
+  // 30 MB JSON body limit so base64 asset uploads (the path Eve uses) aren't
+  // rejected by Fastify's 1 MiB default — matches the 25 MB multipart cap.
+  const app = Fastify({ logger: false, bodyLimit: 30 * 1024 * 1024 }).withTypeProvider<ZodTypeProvider>();
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   await app.register(multipart, { limits: { fileSize: 25 * 1024 * 1024 } });
@@ -86,14 +88,20 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
 
   app.setErrorHandler((rawErr: unknown, _req, reply) => {
     if (rawErr instanceof NotFoundError) return reply.status(404).send({ error: rawErr.message });
+    if (rawErr instanceof ConflictError) return reply.status(409).send({ error: rawErr.message });
     if (rawErr instanceof OpsError) {
       return reply.status(422).send({ error: rawErr.message, opIndex: rawErr.opIndex });
     }
     if (rawErr instanceof ValidationError) {
       return reply.status(422).send({ error: rawErr.message, details: rawErr.details });
     }
-    const err = rawErr as Error & { validation?: unknown };
+    const err = rawErr as Error & { validation?: unknown; statusCode?: number };
     if (err.validation) return reply.status(400).send({ error: err.message });
+    // Honor a framework error's own 4xx status (body-too-large, unsupported
+    // media type, …) instead of masking it as a 500.
+    if (typeof err.statusCode === 'number' && err.statusCode >= 400 && err.statusCode < 500) {
+      return reply.status(err.statusCode).send({ error: err.message });
+    }
     return reply.status(500).send({ error: err.message });
   });
 
@@ -224,7 +232,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   );
 
   app.delete('/sites/:siteId/pages/:pageId', { schema: { params: PageParams } }, async (req, reply) => {
-    core.deletePage(req.params.siteId, req.params.pageId);
+    await core.deletePage(req.params.siteId, req.params.pageId);
     return reply.status(204).send();
   });
 
@@ -270,7 +278,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     '/sites/:siteId/assets/:assetId',
     { schema: { params: z.object({ siteId: z.string(), assetId: z.string() }) } },
     async (req, reply) => {
-      core.deleteAsset(req.params.siteId, req.params.assetId);
+      await core.deleteAsset(req.params.siteId, req.params.assetId);
       return reply.status(204).send();
     },
   );

@@ -186,4 +186,24 @@ describe('input validation hardening', () => {
     const res = await app.inject({ url: `/sites/${a}/pages/${bPages[0]!.id}` });
     expect(res.statusCode).toBe(404);
   });
+
+  it('DELETE of a missing page/asset returns 404 (awaited), not a 204 or crash', async () => {
+    const siteId = await makeSite();
+    const page = await app.inject({ method: 'DELETE', url: `/sites/${siteId}/pages/does-not-exist` });
+    expect(page.statusCode).toBe(404);
+    const asset = await app.inject({ method: 'DELETE', url: `/sites/${siteId}/assets/does-not-exist` });
+    expect(asset.statusCode).toBe(404);
+  });
+
+  it('accepts a large base64 asset upload (over Fastify’s 1 MiB default body limit)', async () => {
+    const siteId = await makeSite();
+    // ~2 MB of raw bytes → ~2.7 MB base64 body; must not 413/500.
+    const big = Buffer.alloc(2 * 1024 * 1024, 0x41).toString('base64');
+    const res = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteId}/assets`,
+      payload: { filename: 'big.bin', mime: 'application/octet-stream', base64: big },
+    });
+    expect(res.statusCode).toBe(201);
+  });
 });
