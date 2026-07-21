@@ -137,4 +137,32 @@ test.describe('visual editor', () => {
     await page.getByRole('button', { name: /Publish/ }).click();
     await expect(page.locator('.toolbar .status')).toHaveText(/published 4 pages/, { timeout: 15_000 });
   });
+
+  test('inline WYSIWYG: double-click a text node and type on the canvas', async ({ page }) => {
+    await openEditor(page);
+    const frame = page.frameLocator('[data-testid="canvas-frame"]');
+
+    // Insert a fresh heading into the page root so we have a known leaf text node.
+    await page.locator('.outline-row').first().click();
+    await page.getByTestId('palette-heading').dblclick();
+    await expect(page.locator('.toolbar .status')).toHaveText(/saved/);
+
+    const heading = frame.locator('.c-heading', { hasText: 'Heading' });
+    await expect(heading).toBeVisible();
+
+    // Double-click starts inline editing: the injected script sets contenteditable
+    // and selects the text; typing replaces it, Enter commits.
+    await heading.dblclick();
+    await expect(heading).toHaveAttribute('contenteditable', 'true');
+    await page.keyboard.type('Edited right on the canvas');
+    await page.keyboard.press('Enter');
+
+    await expect(page.locator('.toolbar .status')).toHaveText(/saved/);
+    await expect(frame.locator('.c-heading', { hasText: 'Edited right on the canvas' })).toBeVisible();
+
+    // The edit went through the tree-ops pipeline, so undo reverts it.
+    await page.getByRole('button', { name: /undo/ }).click();
+    await expect(page.locator('.toolbar .status')).toHaveText(/saved/);
+    await expect(frame.locator('.c-heading', { hasText: 'Heading' })).toBeVisible();
+  });
 });

@@ -6,15 +6,22 @@
  *  in:  {type:'wb:select-node', nodeId}            → outline + scroll to node
  *  in:  {type:'wb:hittest', x, y, containerIds}    → find drop target under point
  *  in:  {type:'wb:clear-indicator'}
+ *  in:  {type:'wb:edit-begin', nodeId}             → start inline text editing on a node
  *  out: {type:'wb:ready'}
  *  out: {type:'wb:clicked', nodeId}
+ *  out: {type:'wb:dblclick', nodeId}               → editor decides if node is text-editable
+ *  out: {type:'wb:text-commit', nodeId, text}      → new plain text for the node
  *  out: {type:'wb:drop-target', containerId, index, rect:{...}}
  */
 export const EDITOR_PREVIEW_JS = `(function(){
 var selected=null;
+var editing=null;   // nodeId currently being inline-edited
+var editEl=null;    // the contenteditable element
+var editOrig='';    // original textContent, for cancel/no-op revert
 var style=document.createElement('style');
 style.textContent='.wb-ed-hover{outline:2px dashed #7c6ff0 !important;outline-offset:-2px}'+
 '.wb-ed-selected{outline:2px solid #7c6ff0 !important;outline-offset:-2px}'+
+'.wb-ed-editing{outline:2px solid #3ec2cc !important;outline-offset:-2px;cursor:text !important;white-space:pre-wrap}'+
 '#wb-ed-indicator{position:absolute;background:#7c6ff0;pointer-events:none;z-index:99999;border-radius:2px}'+
 'a,button{cursor:default !important}';
 document.head.appendChild(style);
@@ -28,14 +35,22 @@ function nodeEl(el){return el&&el.closest?el.closest('[data-node-id]'):null}
 function send(msg){parent.postMessage(msg,location.origin)}
 
 document.addEventListener('click',function(e){
+  // While editing, let clicks inside the editable place the caret normally.
+  if(editing){var ce=nodeEl(e.target);if(ce&&ce.getAttribute('data-node-id')===editing)return}
   e.preventDefault();e.stopPropagation();
   var el=nodeEl(e.target);
   if(el){setSelected(el.getAttribute('data-node-id'));send({type:'wb:clicked',nodeId:el.getAttribute('data-node-id')})}
+},true);
+// Double-click asks the editor whether this node is inline-text-editable.
+document.addEventListener('dblclick',function(e){
+  var el=nodeEl(e.target);
+  if(el){e.preventDefault();e.stopPropagation();send({type:'wb:dblclick',nodeId:el.getAttribute('data-node-id')})}
 },true);
 document.addEventListener('submit',function(e){e.preventDefault()},true);
 
 var hoverEl=null;
 document.addEventListener('mousemove',function(e){
+  if(editing)return;
   var el=nodeEl(e.target);
   if(hoverEl===el)return;
   if(hoverEl)hoverEl.classList.remove('wb-ed-hover');
@@ -50,6 +65,43 @@ function setSelected(nodeId){
   var el=document.querySelector('[data-node-id="'+nodeId+'"]');
   if(el){el.classList.remove('wb-ed-hover');el.classList.add('wb-ed-selected')}
 }
+
+function beginEdit(nodeId){
+  finishEdit(false); // close any prior edit first
+  var el=nodeId&&document.querySelector('[data-node-id="'+nodeId+'"]');
+  if(!el)return;
+  setSelected(nodeId);
+  editing=nodeId;editEl=el;editOrig=el.textContent||'';
+  el.classList.remove('wb-ed-selected','wb-ed-hover');
+  el.classList.add('wb-ed-editing');
+  el.setAttribute('contenteditable','true');
+  el.focus();
+  var r=document.createRange();r.selectNodeContents(el);
+  var sel=window.getSelection();sel.removeAllRanges();sel.addRange(r);
+}
+function finishEdit(commit){
+  if(!editing||!editEl)return;
+  var nodeId=editing,el=editEl,orig=editOrig;
+  editing=null;editEl=null;editOrig='';
+  el.removeAttribute('contenteditable');
+  el.classList.remove('wb-ed-editing');
+  var text=(el.textContent||'').replace(/\\s+/g,' ').trim();
+  var was=orig.replace(/\\s+/g,' ').trim();
+  if(commit&&text&&text!==was){
+    send({type:'wb:text-commit',nodeId:nodeId,text:text});
+  }else{
+    el.textContent=orig; // revert on cancel, empty, or no change
+    setSelected(nodeId);
+  }
+}
+document.addEventListener('keydown',function(e){
+  if(!editing)return;
+  if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();finishEdit(true)}
+  else if(e.key==='Escape'){e.preventDefault();finishEdit(false)}
+},true);
+document.addEventListener('blur',function(e){
+  if(editing&&editEl&&e.target===editEl)finishEdit(true);
+},true);
 
 function hittest(x,y,containerIds){
   indicator.style.display='none';
@@ -96,6 +148,8 @@ addEventListener('message',function(e){
     hittest(d.x,d.y,d.containerIds||[]);
   }else if(d.type==='wb:clear-indicator'){
     indicator.style.display='none';
+  }else if(d.type==='wb:edit-begin'){
+    beginEdit(d.nodeId);
   }
 });
 send({type:'wb:ready'});
