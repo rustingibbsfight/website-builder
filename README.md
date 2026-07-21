@@ -176,7 +176,7 @@ wb dev                            # then open http://127.0.0.1:4000/editor/
 
 The editor is a React app mounted on the same REST API agents use — every edit is a `TreeOp[]` batch to `/tree/ops`:
 
-- **Canvas** — the live preview in an iframe; click any element to select it (hover/selection outlines come from an editor-only script injected into the preview, never published).
+- **Canvas** — the live preview in an iframe; click any element to select it (hover/selection outlines come from an editor-only script injected into the preview, never published). **Double-click a heading, paragraph, or button to edit its text inline, right on the canvas** — Enter or click-away commits, Esc cancels; every edit is an undoable tree op.
 - **Palette** — drag a component onto the canvas (a drop indicator shows the exact insertion point, computed by hit-testing real rendered layout) or double-click to insert into the selected container.
 - **Outline** — the page tree; drag rows to reorder or nest, click to select.
 - **Inspector** — props form auto-generated from each component's JSON Schema, plus layout (direction/gap/padding/align/columns/max-width), style tokens, and per-breakpoint visibility.

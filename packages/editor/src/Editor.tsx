@@ -16,6 +16,17 @@ const LAYOUT_DEFAULTS: Record<string, Record<string, unknown>> = {
   grid: { direction: 'grid', columns: 3, gap: 'lg' },
 };
 
+/**
+ * Leaf components whose rendered element's text content maps 1:1 to a single
+ * prop — these support inline (WYSIWYG) editing: double-click and type on the
+ * canvas. Maps component type → the prop that holds its text.
+ */
+const INLINE_TEXT_PROP: Record<string, string> = {
+  heading: 'text',
+  text: 'text',
+  button: 'label',
+};
+
 export interface DragState {
   kind: 'palette' | 'node';
   type?: string;
@@ -67,11 +78,22 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
   }, [siteId, pageId]);
 
   // ── Canvas messaging ───────────────────────────────────────────────────────
+  // Refs so the (stable) message listener always sees the latest tree/mutate.
+  const pageRef = useRef<Page | null>(page);
+  pageRef.current = page;
+  const mutateRef = useRef<(ops: TreeOp[]) => void>(() => {});
+
   useEffect(() => {
     const onMessage = (e: MessageEvent) => {
       // The preview iframe is same-origin; ignore messages from anywhere else.
       if (e.origin !== window.location.origin) return;
-      const d = e.data as { type?: string; nodeId?: string; containerId?: string | null; index?: number };
+      const d = e.data as {
+        type?: string;
+        nodeId?: string;
+        containerId?: string | null;
+        index?: number;
+        text?: string;
+      };
       if (d.type === 'wb:clicked' && d.nodeId) setSelectedId(d.nodeId);
       if (d.type === 'wb:ready' && selectedId) {
         frameRef.current?.contentWindow?.postMessage(
@@ -81,6 +103,28 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
       }
       if (d.type === 'wb:drop-target') {
         dropTarget.current = d.containerId ? { containerId: d.containerId, index: d.index ?? 0 } : null;
+      }
+      // Inline (WYSIWYG) editing: double-click a text node → edit on the canvas.
+      if (d.type === 'wb:dblclick' && d.nodeId) {
+        const node = pageRef.current ? findNode(pageRef.current.tree, d.nodeId) : null;
+        setSelectedId(d.nodeId);
+        if (node && INLINE_TEXT_PROP[node.type]) {
+          frameRef.current?.contentWindow?.postMessage(
+            { type: 'wb:edit-begin', nodeId: d.nodeId },
+            window.location.origin,
+          );
+        }
+      }
+      if (d.type === 'wb:text-commit' && d.nodeId && typeof d.text === 'string') {
+        const node = pageRef.current ? findNode(pageRef.current.tree, d.nodeId) : null;
+        const prop = node ? INLINE_TEXT_PROP[node.type] : undefined;
+        const current = node ? (node.props as Record<string, unknown>)[prop ?? ''] : undefined;
+        if (node && prop && d.text && d.text !== current) {
+          mutateRef.current([{ op: 'update', nodeId: d.nodeId, props: { [prop]: d.text } }]);
+        } else {
+          // No-op / empty edit: reload the canvas so the rendered text is authoritative.
+          setFrameKey((k) => k + 1);
+        }
       }
     };
     window.addEventListener('message', onMessage);
@@ -111,6 +155,7 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
     },
     [page, pageId, siteId],
   );
+  mutateRef.current = (ops: TreeOp[]) => void mutate(ops);
 
   const restoreTree = useCallback(
     async (tree: WbNode) => {
