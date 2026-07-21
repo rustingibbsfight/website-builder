@@ -49,9 +49,19 @@ In Slack:
 
 Eve should reply in-thread with a live `https://wb-breakthrough-medical.vercel.app` URL. The visual editor is at `https://<wb-api>/editor/` (sign in with `WB_API_TOKEN`).
 
-## Continuous deploys (optional)
+## Continuous deploys (CI)
 
-`.github/workflows/deploy.yml` tests the whole workspace and redeploys both apps on every push to `main`. After the first `setup-cloud.sh` run, add these GitHub Actions secrets: `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_WB_API_PROJECT_ID`, `VERCEL_EVE_PROJECT_ID` (the ids are in each app's `.vercel/project.json` after linking).
+`.github/workflows/deploy.yml` tests the whole workspace, then on every push to `main` (or a manual **Run workflow**) redeploys **wb-api — the REST API plus the drag-and-drop visual editor served at `/editor/`** — and smoke-tests that `/editor/` responds. To enable it:
+
+1. Create the Vercel project(s) once (`./scripts/setup-cloud.sh`, or `vercel link` inside `apps/wb-api`).
+2. In **GitHub repo → Settings → Secrets and variables → Actions**, add these **secrets**:
+   - `VERCEL_TOKEN` — a Vercel API token (vercel.com/account/tokens)
+   - `VERCEL_ORG_ID` — from `apps/wb-api/.vercel/project.json` after linking
+   - `VERCEL_WB_API_PROJECT_ID` — the `projectId` in that same file
+
+That's all the editor needs — push to `main` and it deploys.
+
+**Eve is opt-in.** The `deploy-eve` job stays off (so a not-yet-configured Eve never fails the editor's deploy). To turn it on, finish Eve's Slack/Connect setup, then add the **variable** `DEPLOY_EVE=true` and the **secret** `VERCEL_EVE_PROJECT_ID` (from `apps/eve/.vercel/project.json`).
 
 ## Before pointing real patients at the Breakthrough Medical site
 
