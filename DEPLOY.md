@@ -49,13 +49,22 @@ In Slack:
 
 Eve should reply in-thread with a live `https://wb-breakthrough-medical.vercel.app` URL. The visual editor is at `https://<wb-api>/editor/` (sign in with `WB_API_TOKEN`).
 
-## Deploys — handled by Vercel's Git integration
+## Deploys
 
-The Vercel projects (`wb-api`, `wb-eve`, and the per-site `wb-*` projects) are connected to this repo through **Vercel's Git integration**, so every push to the trunk branch redeploys them automatically — no CI secrets, no `vercel` CLI step. The visual editor ships inside `wb-api` and is live at `https://<wb-api>/editor/` (sign in with `WB_API_TOKEN`).
+The Vercel projects (`wb-api`, `wb-eve`, and the per-site `wb-*` projects) already exist and hold all runtime env vars. The visual editor ships inside `wb-api` and is live at `https://<wb-api>/editor/` (sign in with `WB_API_TOKEN`).
+
+**Today, production deploys are manual.** Merging to the trunk branch does **not** currently redeploy — Vercel's Git integration is not wired to this trunk. To ship the current tree to production:
+
+```bash
+vercel link --project wb-api --yes      # run once, at the REPO ROOT
+vercel deploy --prod                     # from the repo root — NOT apps/wb-api
+```
+
+> ⚠️ The project's Root Directory is `apps/wb-api`, so `vercel deploy` must run from the **repo root**; running it inside `apps/wb-api` doubles the path (`apps/wb-api/apps/wb-api`) and fails.
 
 `.github/workflows/ci.yml` runs `pnpm -r build && pnpm -r test` on pushes and PRs to guard correctness; it does **not** deploy.
 
-> If you ever want CI to own deploys instead of Vercel's Git integration (e.g. to gate deploys on tests), disconnect the project's Git integration in Vercel and add a deploy job with `VERCEL_TOKEN` / `VERCEL_ORG_ID` / `VERCEL_*_PROJECT_ID` secrets — but don't run both, or every push deploys twice.
+**To make deploys automatic:** in the Vercel dashboard → `wb-api` → Settings → Git, connect the GitHub repo and set the **Production Branch** to the trunk (`claude/ai-website-builder-api-xqg6zr`). After that, merges deploy on their own and this section can be simplified. (Alternatively, re-add a CI deploy job with `VERCEL_TOKEN` / `VERCEL_ORG_ID` / `VERCEL_*_PROJECT_ID` secrets — but don't run both mechanisms, or every push deploys twice.)
 
 ## Before pointing real patients at the Breakthrough Medical site
 
