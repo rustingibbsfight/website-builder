@@ -1,0 +1,28 @@
+# CI: test the whole workspace on every push to trunk and on PRs.
+#
+# Deploys are NOT done here — the Vercel projects (wb-api, wb-eve, …) are
+# connected to this repo via Vercel's Git integration and deploy automatically
+# on push. This workflow only guards correctness.
+name: ci
+
+on:
+  push:
+    branches: [main, claude/ai-website-builder-api-xqg6zr]
+  pull_request: {}
+  workflow_dispatch: {}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -r build
+      - run: pnpm -r test

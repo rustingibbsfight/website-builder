@@ -49,19 +49,13 @@ In Slack:
 
 Eve should reply in-thread with a live `https://wb-breakthrough-medical.vercel.app` URL. The visual editor is at `https://<wb-api>/editor/` (sign in with `WB_API_TOKEN`).
 
-## Continuous deploys (CI)
+## Deploys — handled by Vercel's Git integration
 
-`.github/workflows/deploy.yml` tests the whole workspace, then on every push to `main` (or a manual **Run workflow**) redeploys **wb-api — the REST API plus the drag-and-drop visual editor served at `/editor/`** — and smoke-tests that `/editor/` responds. To enable it:
+The Vercel projects (`wb-api`, `wb-eve`, and the per-site `wb-*` projects) are connected to this repo through **Vercel's Git integration**, so every push to the trunk branch redeploys them automatically — no CI secrets, no `vercel` CLI step. The visual editor ships inside `wb-api` and is live at `https://<wb-api>/editor/` (sign in with `WB_API_TOKEN`).
 
-1. Create the Vercel project(s) once (`./scripts/setup-cloud.sh`, or `vercel link` inside `apps/wb-api`).
-2. In **GitHub repo → Settings → Secrets and variables → Actions**, add these **secrets**:
-   - `VERCEL_TOKEN` — a Vercel API token (vercel.com/account/tokens)
-   - `VERCEL_ORG_ID` — from `apps/wb-api/.vercel/project.json` after linking
-   - `VERCEL_WB_API_PROJECT_ID` — the `projectId` in that same file
+`.github/workflows/ci.yml` runs `pnpm -r build && pnpm -r test` on pushes and PRs to guard correctness; it does **not** deploy.
 
-That's all the editor needs — push to `main` and it deploys.
-
-**Eve is opt-in.** The `deploy-eve` job stays off (so a not-yet-configured Eve never fails the editor's deploy). To turn it on, finish Eve's Slack/Connect setup, then add the **variable** `DEPLOY_EVE=true` and the **secret** `VERCEL_EVE_PROJECT_ID` (from `apps/eve/.vercel/project.json`).
+> If you ever want CI to own deploys instead of Vercel's Git integration (e.g. to gate deploys on tests), disconnect the project's Git integration in Vercel and add a deploy job with `VERCEL_TOKEN` / `VERCEL_ORG_ID` / `VERCEL_*_PROJECT_ID` secrets — but don't run both, or every push deploys twice.
 
 ## Before pointing real patients at the Breakthrough Medical site
 
