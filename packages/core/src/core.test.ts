@@ -59,6 +59,29 @@ describe('WbCore sites & pages', () => {
     }
   });
 
+  it('enforces the destination parent allowedChildren via ops (insert + move)', async () => {
+    const site = await core.createSite('AllowedChildren');
+    const page = (await core.listPages(site.id))[0]!;
+    const rootId = page.tree.id;
+    // featureGrid only allows card/testimonial/stack/image children.
+    const afterGrid = await core.applyPageOps(site.id, page.id, [
+      { op: 'insert', parentId: rootId, node: { type: 'featureGrid', props: {}, children: [{ type: 'card', props: { title: 'A' } }] } },
+      { op: 'insert', parentId: rootId, node: { type: 'heading', props: { text: 'loose', level: 2 } } },
+    ]);
+    const gridId = afterGrid.tree.children!.find((c) => c.type === 'featureGrid')!.id;
+    const headingId = afterGrid.tree.children!.find((c) => c.type === 'heading')!.id;
+
+    // Inserting a disallowed child type must be rejected (was silently allowed).
+    await expect(
+      core.applyPageOps(site.id, page.id, [{ op: 'insert', parentId: gridId, node: { type: 'heading', props: { text: 'x', level: 2 } } }]),
+    ).rejects.toThrow(/only allows children/);
+
+    // Moving a disallowed node into it is rejected too.
+    await expect(
+      core.applyPageOps(site.id, page.id, [{ op: 'move', nodeId: headingId, parentId: gridId, index: 0 }]),
+    ).rejects.toThrow(/only allows children/);
+  });
+
   it('rejects invalid component props via ops', async () => {
     const site = await core.createSite('Val Site');
     const page = (await core.listPages(site.id))[0]!;
