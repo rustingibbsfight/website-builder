@@ -270,4 +270,19 @@ describe('MCP server', () => {
     expect(theme.colors.primary).toBe('#abcdef');
     expect(theme.colors.text).toBeTruthy();
   });
+
+  it('add_asset refuses SSRF-y URLs (internal/metadata hosts + non-http)', async () => {
+    for (const url of [
+      'http://127.0.0.1:1/x',
+      'http://169.254.169.254/latest/meta-data/',
+      'http://localhost/x',
+      'http://10.0.0.5/x',
+      'http://[::1]/x',
+      'file:///etc/passwd',
+    ]) {
+      const res = await client.callTool({ name: 'add_asset', arguments: { siteId: 'nope', filename: 'x.png', url } });
+      expect((res as { isError?: boolean }).isError, url).toBe(true);
+      expect(textOf(res).toLowerCase(), url).toMatch(/refus|allow|invalid|private|internal|local|http/);
+    }
+  });
 });
