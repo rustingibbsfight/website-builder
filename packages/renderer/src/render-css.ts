@@ -108,7 +108,13 @@ export function styleRules(style: Partial<Style>, resolveAsset: RenderCtx['resol
     rules.push(`box-shadow:${shadows[style.shadow]}`);
   }
   if (style.border) {
-    rules.push(`border:${style.border.width ?? 1}px solid ${colorValue(style.border.color)}`);
+    const decl = `${style.border.width ?? 1}px solid ${colorValue(style.border.color)}`;
+    const sides = style.border.sides ? [...new Set(style.border.sides)] : null;
+    if (sides && sides.length < 4) {
+      for (const side of sides) rules.push(`border-${side}:${decl}`);
+    } else {
+      rules.push(`border:${decl}`);
+    }
   }
   if (style.minHeight && style.minHeight !== 'auto') {
     rules.push(`min-height:${style.minHeight === 'half' ? '50vh' : '100vh'}`);
