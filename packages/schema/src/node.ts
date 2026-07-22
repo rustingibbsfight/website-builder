@@ -39,6 +39,21 @@ export const LayoutSchema = z
   .strict();
 export type Layout = z.infer<typeof LayoutSchema>;
 
+/** Style overrides applied on an interactive state (:hover / :focus). Pure CSS,
+ * no JavaScript — a colour subset of the full style (no background image). */
+export const StateStyleSchema = z
+  .object({
+    background: ColorTokenSchema.optional().describe('Background color for this state'),
+    color: ColorTokenSchema.optional().describe('Text color for this state'),
+    shadow: ShadowTokenSchema.optional(),
+    border: z
+      .object({ color: ColorTokenSchema, width: z.union([z.literal(1), z.literal(2)]).optional() })
+      .optional(),
+    radius: RadiusTokenSchema.optional(),
+  })
+  .strict();
+export type StateStyle = z.infer<typeof StateStyleSchema>;
+
 export const StyleSchema = z
   .object({
     background: z
@@ -57,6 +72,8 @@ export const StyleSchema = z
       .object({ color: ColorTokenSchema, width: z.union([z.literal(1), z.literal(2)]).optional() })
       .optional(),
     minHeight: z.enum(['auto', 'half', 'screen']).optional().describe('Minimum height: half/full viewport'),
+    hover: StateStyleSchema.optional().describe('Style applied on hover (pure CSS)'),
+    focus: StateStyleSchema.optional().describe('Style applied on keyboard focus (pure CSS)'),
   })
   .strict();
 export type Style = z.infer<typeof StyleSchema>;

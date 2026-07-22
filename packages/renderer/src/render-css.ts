@@ -129,6 +129,20 @@ function cssForNode(node: WbNode, scope: string, resolveAsset: RenderCtx['resolv
   if (node.layout) emit(out.base, layoutSel, layoutRules(node.layout));
   if (node.style) emit(out.base, self, styleRules(node.style, resolveAsset));
 
+  // Interactive states — pure CSS, no JavaScript.
+  if (node.style?.hover) {
+    const r = styleRules(node.style.hover as Partial<Style>, resolveAsset);
+    if (r.length) {
+      out.base.push(
+        `${self}{transition:background-color .15s ease,color .15s ease,box-shadow .15s ease,border-color .15s ease}`,
+      );
+      emit(out.base, `${self}:hover`, r);
+    }
+  }
+  if (node.style?.focus) {
+    emit(out.base, `${self}:focus-visible`, styleRules(node.style.focus as Partial<Style>, resolveAsset));
+  }
+
   const def = getComponent(node.type);
   if (def.nodeCss) {
     const props = parseProps(node.type, node.props);

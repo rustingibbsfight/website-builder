@@ -164,6 +164,7 @@ code { color: var(--accent); }
 .tabs button.active { background: var(--accent); color: #fff; }
 
 .fields { display: flex; flex-direction: column; gap: 8px; }
+.style-state-head { margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--line, #2a2e39); font-size: .72rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
 .field { display: flex; flex-direction: column; gap: 3px; }
 .field > span { color: var(--muted); font-size: 12px; }
 .field input,

@@ -131,6 +131,23 @@ describe('renderer edge cases', () => {
     expect(html).toContain('<link rel="canonical" href="https://clinic.example/">');
   });
 
+  it('emits pure-CSS :hover and :focus-visible rules for interactive states', () => {
+    const p = page({ id: 'r', type: 'page-root', props: {}, children: [
+      {
+        id: 'btn',
+        type: 'button',
+        props: { label: 'Go', href: '/x' },
+        style: { background: 'primary', hover: { background: 'accent', shadow: 'lg' }, focus: { color: 'white' } },
+      },
+    ] });
+    const css = renderSite(site(), [p], []).files.get('styles.css')!;
+    expect(css).toContain('.n-btn:hover{');
+    expect(css).toContain('.n-btn:focus-visible{');
+    // a transition is added so the hover animates, and it stays zero-JS
+    expect(css).toMatch(/\.n-btn\{[^}]*transition:/);
+    expect(css).not.toMatch(/<script|onmouse/i);
+  });
+
   it('honors noindex, explicit twitterCard, and social-only overrides', () => {
     const p = page({ id: 'r', type: 'page-root', props: {}, children: [] }, {
       meta: { description: 'd', ogTitle: 'Social T', ogDescription: 'Social D', twitterCard: 'summary', noIndex: true },
