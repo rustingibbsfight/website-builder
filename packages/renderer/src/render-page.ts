@@ -34,10 +34,26 @@ export function renderNodeHtml(node: WbNode, ctx: RenderCtx): string {
 }
 
 /**
+ * Deep-clone a subtree, prefixing every node id (#26). Symbol definitions are
+ * shared, so each instance must render with distinct ids — otherwise element
+ * ids/names inside the definition (gallery `:target`, tabs/accordion radio
+ * `name`s, form field ids) collide across instances on the same page and break
+ * the CSS-only interactivity. Deterministic, so HTML and CSS ids match.
+ */
+export function reIdSubtree(node: WbNode, prefix: string): WbNode {
+  return {
+    ...node,
+    id: prefix + node.id,
+    children: node.children?.map((c) => reIdSubtree(c, prefix)),
+  };
+}
+
+/**
  * Resolve a symbol instance to its definition subtree (#26). Publish inlines the
  * resolved HTML; the editor preview wraps it as one selectable unit (inner
  * data-node-ids stripped) so you edit the definition, not the instance. Missing
  * symbols and cycles degrade to nothing (publish) or a placeholder (preview).
+ * The definition is re-id'd per instance so multiple instances don't collide.
  */
 function renderSymbolInstance(node: WbNode, ctx: RenderCtx): string {
   const symId = String((node.props as { symbolId?: unknown })?.symbolId ?? '');
@@ -52,7 +68,7 @@ function renderSymbolInstance(node: WbNode, ctx: RenderCtx): string {
   }
   const innerCtx: RenderCtx = { ...ctx, symbolStack: [...stack, symId] };
   innerCtx.renderNode = (n) => renderNodeHtml(n, innerCtx);
-  let inner = renderNodeHtml(def, innerCtx);
+  let inner = renderNodeHtml(reIdSubtree(def, `${node.id}_`), innerCtx);
   if (ctx.preview) {
     inner = inner.replace(/ data-node-id="[^"]*"/g, '');
     return `<div class="c-symbolInstance n-${node.id}" data-node-id="${node.id}" data-symbol="${escapeHtml(symId)}">${inner}</div>`;
