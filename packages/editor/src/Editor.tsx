@@ -253,6 +253,17 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
     [selectedId, page, mutate],
   );
 
+  // Drag UIs compute a drop slot with the dragged node still in place; the move
+  // op wants the node's FINAL index. When moving to a later slot within the same
+  // parent, removing the node shifts everything down one — so subtract one.
+  const dragSlotToFinalIndex = useCallback(
+    (nodeId: string, parentId: string, slot: number) => {
+      const cur = page ? findParent(page.tree, nodeId) : null;
+      return cur && cur.parent.id === parentId && cur.index < slot ? slot - 1 : slot;
+    },
+    [page],
+  );
+
   // ── Canvas drag overlay ────────────────────────────────────────────────────
   const containerIds = useMemo(
     () => (page ? collectContainerIds(page.tree, isContainer) : []),
@@ -280,7 +291,8 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
     if (current.kind === 'palette' && current.type) {
       await insertComponent(current.type, target.containerId, target.index);
     } else if (current.kind === 'node' && current.nodeId && current.nodeId !== target.containerId) {
-      await mutate([{ op: 'move', nodeId: current.nodeId, parentId: target.containerId, index: target.index }]);
+      const index = dragSlotToFinalIndex(current.nodeId, target.containerId, target.index);
+      await mutate([{ op: 'move', nodeId: current.nodeId, parentId: target.containerId, index }]);
     }
   };
 
@@ -377,7 +389,9 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
           onSelect={selectNode}
           onStartDrag={(nodeId) => setDrag({ kind: 'node', nodeId })}
           onEndDrag={() => setDrag(null)}
-          onMove={(nodeId, parentId, index) => void mutate([{ op: 'move', nodeId, parentId, index }])}
+          onMove={(nodeId, parentId, index) =>
+            void mutate([{ op: 'move', nodeId, parentId, index: dragSlotToFinalIndex(nodeId, parentId, index) }])
+          }
         />
       </aside>
 

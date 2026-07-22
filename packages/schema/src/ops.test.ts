@@ -55,9 +55,7 @@ describe('applyOps', () => {
     expect(findNode(next, 'sec2')!.children!.map((c) => c.id)).toEqual(['p1']);
   });
 
-  it('reorders within the same parent without overshooting (index is caller-relative)', () => {
-    // A container [a, b, c]; `index` is a slot as the caller sees it (with the
-    // moving node still present) — the drop indicator between two children.
+  it('move index is the FINAL position of the node (remove-then-insert)', () => {
     const abc = (): WbNode => ({
       id: 'root',
       type: 'page-root',
@@ -70,29 +68,29 @@ describe('applyOps', () => {
     });
     const order = (t: WbNode) => t.children!.map((n) => n.id);
 
-    // Move A down to the slot between B and C → B, A, C (not B, C, A).
+    // Move A to final index 2 → B, C, A.
     expect(order(applyOps(abc(), [{ op: 'move', nodeId: 'a', parentId: 'root', index: 2 }]))).toEqual([
-      'b',
-      'a',
-      'c',
+      'b', 'c', 'a',
     ]);
-    // Move C up to the slot between A and B → A, C, B.
+    // Move C to final index 0 → C, A, B.
+    expect(order(applyOps(abc(), [{ op: 'move', nodeId: 'c', parentId: 'root', index: 0 }]))).toEqual([
+      'c', 'a', 'b',
+    ]);
+    // Move C to final index 1 → A, C, B  (what the Inspector's "move up" sends).
     expect(order(applyOps(abc(), [{ op: 'move', nodeId: 'c', parentId: 'root', index: 1 }]))).toEqual([
-      'a',
-      'c',
-      'b',
+      'a', 'c', 'b',
     ]);
-    // Move A to the very end.
-    expect(order(applyOps(abc(), [{ op: 'move', nodeId: 'a', parentId: 'root', index: 3 }]))).toEqual([
-      'b',
-      'c',
-      'a',
+    // Move A to final index 1 → B, A, C  (what "move down" sends: found.index+1).
+    expect(order(applyOps(abc(), [{ op: 'move', nodeId: 'a', parentId: 'root', index: 1 }]))).toEqual([
+      'b', 'a', 'c',
     ]);
-    // No-op: move A to its own slot 0 stays put.
-    expect(order(applyOps(abc(), [{ op: 'move', nodeId: 'a', parentId: 'root', index: 0 }]))).toEqual([
-      'a',
-      'b',
-      'c',
+    // No-op: move B to its own index 1 stays put.
+    expect(order(applyOps(abc(), [{ op: 'move', nodeId: 'b', parentId: 'root', index: 1 }]))).toEqual([
+      'a', 'b', 'c',
+    ]);
+    // Index past the end clamps to last.
+    expect(order(applyOps(abc(), [{ op: 'move', nodeId: 'a', parentId: 'root', index: 9 }]))).toEqual([
+      'b', 'c', 'a',
     ]);
   });
 

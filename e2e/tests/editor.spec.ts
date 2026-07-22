@@ -159,6 +159,54 @@ test.describe('visual editor', () => {
     await expect(page.locator('.pages li', { hasText: 'scratch-del' })).toHaveCount(0);
   });
 
+  test('Inspector move down/up reorders siblings (regression guard for move-down)', async ({ page }) => {
+    // Seed a section with three labelled headings on the home page via the API.
+    const api = page.request;
+    const sites = (await (await api.get(`${BASE}/sites`)).json()) as Array<{ id: string }>;
+    const siteId = sites[0]!.id;
+    const pages = (await (await api.get(`${BASE}/sites/${siteId}/pages`)).json()) as Array<{ id: string }>;
+    const pageId = pages[0]!.id;
+    const full = (await (await api.get(`${BASE}/sites/${siteId}/pages/${pageId}`)).json()) as {
+      tree: { id: string };
+    };
+    await api.post(`${BASE}/sites/${siteId}/pages/${pageId}/tree/ops`, {
+      data: {
+        ops: [
+          {
+            op: 'insert',
+            parentId: full.tree.id,
+            node: {
+              type: 'section',
+              props: {},
+              layout: { direction: 'stack', gap: 'md' },
+              children: [
+                { type: 'heading', props: { text: 'Alpha', level: 2 } },
+                { type: 'heading', props: { text: 'Bravo', level: 2 } },
+                { type: 'heading', props: { text: 'Charlie', level: 2 } },
+              ],
+            },
+          },
+        ],
+      },
+    });
+
+    await openEditor(page);
+    const frame = page.frameLocator('[data-testid="canvas-frame"]');
+    const order = async () =>
+      (await frame.locator('.c-heading').allInnerTexts()).filter((t) => ['Alpha', 'Bravo', 'Charlie'].includes(t));
+    await expect.poll(order).toEqual(['Alpha', 'Bravo', 'Charlie']);
+
+    // Move Alpha DOWN → Bravo, Alpha, Charlie  (the case PR that regressed move-down would break).
+    await frame.locator('.c-heading', { hasText: 'Alpha' }).click();
+    await page.locator('button[title="Move down"]').click();
+    await expect.poll(order).toEqual(['Bravo', 'Alpha', 'Charlie']);
+
+    // Move Alpha back UP → Alpha, Bravo, Charlie.
+    await frame.locator('.c-heading', { hasText: 'Alpha' }).click();
+    await page.locator('button[title="Move up"]').click();
+    await expect.poll(order).toEqual(['Alpha', 'Bravo', 'Charlie']);
+  });
+
   test('inline WYSIWYG: double-click a text node and type on the canvas', async ({ page }) => {
     await openEditor(page);
     const frame = page.frameLocator('[data-testid="canvas-frame"]');
