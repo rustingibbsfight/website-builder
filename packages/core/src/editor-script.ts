@@ -14,6 +14,7 @@
  *  out: {type:'wb:text-commit', nodeId, text}      → new plain text for the node
  *  out: {type:'wb:drop-target', containerId, index, rect:{...}}
  *  out: {type:'wb:move-node', nodeId, containerId, index}  → drag-reorder result
+ *  out: {type:'wb:set-layout', nodeId, key, value}         → on-canvas spacing edit
  */
 export const EDITOR_PREVIEW_JS = `(function(){
 var selected=null;
@@ -33,6 +34,8 @@ style.textContent='.wb-ed-hover{outline:2px dashed #7c6ff0 !important;outline-of
 '#wb-ed-indicator{position:absolute;background:#7c6ff0;pointer-events:none;z-index:99999;border-radius:2px}'+
 '.wb-ed-selected{cursor:grab}'+
 '.wb-ed-dragging{opacity:.55 !important;cursor:grabbing !important}'+
+'#wb-ed-pad-grip{position:absolute;z-index:99998;width:20px;height:20px;margin:-10px 0 0 -10px;border-radius:50%;background:#3ec2cc;border:2px solid #fff;cursor:ns-resize;box-shadow:0 1px 5px rgb(0 0 0/.4)}'+
+'#wb-ed-pad-label{position:absolute;z-index:99999;background:#222;color:#fff;font:11px/1.4 system-ui,sans-serif;padding:2px 7px;border-radius:4px;pointer-events:none;white-space:nowrap}'+
 'a,button{cursor:default !important}';
 document.head.appendChild(style);
 var indicator=document.createElement('div');
@@ -103,6 +106,7 @@ document.addEventListener('mousemove',function(e){
     if(hoverEl){hoverEl.classList.remove('wb-ed-hover');hoverEl=null;}
     dragEl.classList.remove('wb-ed-selected','wb-ed-hover');
     dragEl.classList.add('wb-ed-dragging');
+    positionPadGrip(); // hide the padding grip while reordering
   }
   e.preventDefault();
   dragHittest(e.clientX,e.clientY);
@@ -151,12 +155,72 @@ function dragHittest(x,y){
   dragTarget={containerId:containerId,index:index};
 }
 
+// ── On-canvas padding handle ─────────────────────────────────────────────────
+// A grip on the selected container's top edge; drag vertically to step the
+// padding token (snapped to the theme spacing scale), with a live label. On
+// release it emits one layout tree-op. Pure editor chrome.
+var padGrip=document.createElement('div');padGrip.id='wb-ed-pad-grip';padGrip.style.display='none';document.body.appendChild(padGrip);
+var padLabel=document.createElement('div');padLabel.id='wb-ed-pad-label';padLabel.style.display='none';document.body.appendChild(padLabel);
+var SPACE_TOKENS=['none','xs','sm','md','lg','xl','2xl'];
+var padDrag=null;
+function spaceScale(){
+  var root=getComputedStyle(document.documentElement);
+  return SPACE_TOKENS.map(function(t){return {token:t,px:t==='none'?0:(parseFloat(root.getPropertyValue('--space-'+t))||0)};});
+}
+function nearestTokenIndex(px,scale){
+  var best=0,bd=1e9;
+  for(var i=0;i<scale.length;i++){var d=Math.abs(scale[i].px-px);if(d<bd){bd=d;best=i;}}
+  return best;
+}
+function positionPadGrip(){
+  if(!selected||dragging||editing||padDrag||containerIds.indexOf(selected)===-1){padGrip.style.display='none';return;}
+  var el=document.querySelector('[data-node-id="'+selected+'"]');
+  if(!el){padGrip.style.display='none';return;}
+  var r=el.getBoundingClientRect();
+  padGrip.style.display='block';
+  padGrip.style.left=(r.left+r.width/2+scrollX)+'px';
+  padGrip.style.top=(r.top+12+scrollY)+'px';
+}
+padGrip.addEventListener('mousedown',function(e){
+  if(editing||!selected)return;
+  e.preventDefault();e.stopPropagation();
+  var el=document.querySelector('[data-node-id="'+selected+'"]');
+  if(!el)return;
+  var scale=spaceScale();
+  var curPx=parseFloat(getComputedStyle(el).paddingTop)||0;
+  padDrag={startY:e.clientY,index:nearestTokenIndex(curPx,scale),scale:scale,el:el,node:selected,token:null};
+  padLabel.style.display='block';
+},true);
+document.addEventListener('mousemove',function(e){
+  if(!padDrag)return;
+  e.preventDefault();
+  var steps=Math.round((e.clientY-padDrag.startY)/18);
+  var idx=Math.max(0,Math.min(padDrag.scale.length-1,padDrag.index+steps));
+  var token=padDrag.scale[idx].token;
+  padDrag.token=token;
+  padDrag.el.style.padding='var(--space-'+token+')';
+  padLabel.textContent='padding: '+token;
+  var r=padDrag.el.getBoundingClientRect();
+  padLabel.style.left=(r.left+r.width/2+16+scrollX)+'px';
+  padLabel.style.top=(r.top+4+scrollY)+'px';
+},true);
+document.addEventListener('mouseup',function(){
+  if(!padDrag)return;
+  var token=padDrag.token,node=padDrag.node,el=padDrag.el;
+  padDrag=null;padLabel.style.display='none';
+  el.style.padding='';
+  if(token!==null)send({type:'wb:set-layout',nodeId:node,key:'padding',value:token});
+},true);
+addEventListener('scroll',positionPadGrip,true);
+addEventListener('resize',positionPadGrip);
+
 function setSelected(nodeId){
   if(selected){var prev=document.querySelector('[data-node-id="'+selected+'"]');if(prev)prev.classList.remove('wb-ed-selected')}
   selected=nodeId;
-  if(!nodeId)return;
+  if(!nodeId){positionPadGrip();return;}
   var el=document.querySelector('[data-node-id="'+nodeId+'"]');
   if(el){el.classList.remove('wb-ed-hover');el.classList.add('wb-ed-selected')}
+  positionPadGrip();
 }
 
 function beginEdit(nodeId,rich,source){
