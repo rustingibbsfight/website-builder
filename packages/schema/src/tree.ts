@@ -68,8 +68,25 @@ export interface TreeProblem {
 }
 
 /** Structural validation: unique ids, non-empty types. */
+/** Resource caps so a pathologically large/deep tree can't exhaust memory or
+ *  stack-overflow the recursive walk/render. Generous for real pages. */
+export const MAX_TREE_NODES = 5000;
+export const MAX_TREE_DEPTH = 60;
+
 export function validateTreeStructure(root: WbNode): TreeProblem[] {
   const problems: TreeProblem[] = [];
+  // Bounds check FIRST, iteratively — a recursive walk would stack-overflow on a
+  // pathologically deep tree before any guard could fire. Bail on the first
+  // breach so we never recurse into an oversized/too-deep tree below.
+  const stack: Array<{ node: WbNode; depth: number }> = [{ node: root, depth: 1 }];
+  let count = 0;
+  while (stack.length) {
+    const { node, depth } = stack.pop()!;
+    if (++count > MAX_TREE_NODES) return [{ nodeId: root.id, message: `tree too large (max ${MAX_TREE_NODES} nodes)` }];
+    if (depth > MAX_TREE_DEPTH) return [{ nodeId: node.id, message: `tree too deep (max ${MAX_TREE_DEPTH} levels)` }];
+    for (const c of node.children ?? []) stack.push({ node: c, depth: depth + 1 });
+  }
+
   const seen = new Set<string>();
   walk(root, (n) => {
     if (!n.id) problems.push({ nodeId: n.id, message: 'node has empty id' });

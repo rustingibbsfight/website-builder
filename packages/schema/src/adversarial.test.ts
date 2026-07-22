@@ -212,6 +212,23 @@ describe('schema recursion + slugs + theme scales', () => {
     expect(() => NodeSchema.parse({ id: 'x', props: {} })).toThrow(); // missing type
   });
 
+  it('rejects pathologically deep or large trees (resource caps)', () => {
+    // A chain deeper than MAX_TREE_DEPTH — built iteratively so the test itself
+    // doesn't recurse.
+    let deep: WbNode = { id: 'leaf', type: 'text', props: { text: 'x' } };
+    for (let i = 0; i < 70; i++) deep = { id: `n${i}`, type: 'stack', props: {}, children: [deep] };
+    expect(validateTreeStructure(deep).some((p) => /too deep/.test(p.message))).toBe(true);
+
+    // A tree with more than MAX_TREE_NODES nodes (flat).
+    const many: WbNode = {
+      id: 'root',
+      type: 'page-root',
+      props: {},
+      children: Array.from({ length: 5001 }, (_, i) => ({ id: `c${i}`, type: 'text', props: { text: 'x' } })),
+    };
+    expect(validateTreeStructure(many).some((p) => /too large/.test(p.message))).toBe(true);
+  });
+
   it('rejects injection-unsafe node ids (id is interpolated into HTML/CSS)', () => {
     // These would break out of a class value / attribute / CSS selector.
     for (const badId of ['a"><script>', 'x" onmouseover="y', 'a}body{display:none', 'has space', 'a<b', "a'b"]) {
