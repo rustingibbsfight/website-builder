@@ -3,6 +3,7 @@ import { api } from './api';
 import { Inspector } from './Inspector';
 import { BlocksPanel, OutlineTree, Palette, PagesPanel } from './panels';
 import { SeoDialog } from './SeoDialog';
+import { SubmissionsDialog } from './SubmissionsDialog';
 import { ThemeDialog } from './ThemeDialog';
 import { collectContainerIds, findNode, findParent, stripIds } from './tree-utils';
 import type { BlockSummary, ComponentSummary, Page, PageSummary, Site, TreeOp, WbNode } from './types';
@@ -50,6 +51,7 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
   const [status, setStatus] = useState('');
   const [themeOpen, setThemeOpen] = useState(false);
   const [seoOpen, setSeoOpen] = useState(false);
+  const [submissionsOpen, setSubmissionsOpen] = useState(false);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [frameKey, setFrameKey] = useState(0);
 
@@ -390,6 +392,14 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
         <button type="button" onClick={() => setSeoOpen(true)} title="SEO & social for this page" data-testid="seo-open">
           🔎 SEO
         </button>
+        <button
+          type="button"
+          onClick={() => setSubmissionsOpen(true)}
+          title="Form submissions captured for this site"
+          data-testid="submissions-open"
+        >
+          📥 Submissions
+        </button>
         <a href={previewPath} target="_blank" rel="noreferrer">
           👁 Preview
         </a>
@@ -508,6 +518,8 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
           onSaved={(updated) => setPage(updated)}
         />
       )}
+
+      {submissionsOpen && <SubmissionsDialog siteId={siteId} onClose={() => setSubmissionsOpen(false)} />}
     </div>
   );
 }
