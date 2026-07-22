@@ -120,6 +120,40 @@ test.describe('visual editor', () => {
     await page.getByRole('button', { name: /undo/ }).click();
   });
 
+  test('style tab sets a focus state that renders as pure CSS', async ({ page }) => {
+    await openEditor(page);
+    await page.locator('.outline-row', { hasText: 'section' }).nth(0).click();
+    await page.getByRole('button', { name: 'style', exact: true }).click();
+    await page.getByTestId('style-focus-background').selectOption('accent');
+    await expect(page.locator('.toolbar .status')).toHaveText(/saved/);
+
+    const sites = (await (await page.request.get(`${BASE}/sites`)).json()) as Array<{ id: string }>;
+    const css = await (await page.request.get(`${BASE}/preview/${sites[0]!.id}/styles.css`)).text();
+    expect(css).toContain(':focus-visible{');
+    expect(css).not.toMatch(/<script|onfocus/i);
+
+    await page.getByRole('button', { name: /undo/ }).click();
+  });
+
+  test('style tab sets a per-side border (pure CSS)', async ({ page }) => {
+    await openEditor(page);
+    await page.locator('.outline-row', { hasText: 'section' }).nth(0).click();
+    await page.getByRole('button', { name: 'style', exact: true }).click();
+    // Border side toggles only appear once a colour is set.
+    await page.getByTestId('style-border-color').selectOption('primary');
+    await page.getByTestId('style-border-side-top').click(); // turn the top edge off
+    await expect(page.locator('.toolbar .status')).toHaveText(/saved/);
+
+    const sites = (await (await page.request.get(`${BASE}/sites`)).json()) as Array<{ id: string }>;
+    const css = await (await page.request.get(`${BASE}/preview/${sites[0]!.id}/styles.css`)).text();
+    // Three remaining sides render as per-side rules; no single all-round border.
+    expect(css).toContain('border-bottom:1px solid var(--color-primary)');
+    expect(css).not.toMatch(/border:1px solid var\(--color-primary\)/);
+
+    await page.getByRole('button', { name: /undo/ }).click();
+    await page.getByRole('button', { name: /undo/ }).click();
+  });
+
   test('delete node removes it from canvas and outline', async ({ page }) => {
     await openEditor(page);
     const frame = page.frameLocator('[data-testid="canvas-frame"]');
@@ -236,8 +270,18 @@ test.describe('visual editor', () => {
 
     await openEditor(page);
     const frame = page.frameLocator('[data-testid="canvas-frame"]');
-    const order = async () =>
-      (await frame.locator('.c-heading').allInnerTexts()).filter((t) => ['Alpha', 'Bravo', 'Charlie'].includes(t));
+    // A move op re-renders the canvas iframe; reading it mid-reload can throw
+    // "Frame was detached". Swallow that and return [] so expect.poll simply
+    // retries once the iframe settles — the assertion itself is unchanged.
+    const order = async () => {
+      try {
+        return (await frame.locator('.c-heading').allInnerTexts()).filter((t) =>
+          ['Alpha', 'Bravo', 'Charlie'].includes(t),
+        );
+      } catch {
+        return [];
+      }
+    };
     await expect.poll(order).toEqual(['Alpha', 'Bravo', 'Charlie']);
 
     // Move Alpha DOWN → Bravo, Alpha, Charlie  (the case PR that regressed move-down would break).

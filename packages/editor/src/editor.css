@@ -165,6 +165,9 @@ code { color: var(--accent); }
 
 .fields { display: flex; flex-direction: column; gap: 8px; }
 .style-state-head { margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--line, #2a2e39); font-size: .72rem; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.side-toggles { display: flex; gap: 4px; }
+.side-toggle { flex: 1; padding: 4px 0; border: 1px solid var(--line, #2a2e39); border-radius: 4px; background: transparent; color: var(--muted); font-size: 11px; font-weight: 700; cursor: pointer; }
+.side-toggle.on { background: var(--accent, #5b7fd7); border-color: var(--accent, #5b7fd7); color: #fff; }
 .field { display: flex; flex-direction: column; gap: 3px; }
 .field > span { color: var(--muted); font-size: 12px; }
 .field input,

@@ -1,6 +1,6 @@
 import { DEFAULT_THEME, type Page, type Site, type WbNode } from '@wb/schema';
 import { describe, expect, it } from 'vitest';
-import { lintPage, renderSite } from './index.js';
+import { lintPage, renderSite, styleRules } from './index.js';
 
 const site = (over: Partial<Site> = {}): Site => ({
   id: 'site1',
@@ -164,6 +164,26 @@ describe('renderSite', () => {
     const a = renderSite(site(), [page(''), page('about')], []);
     const b = renderSite(site(), [page(''), page('about')], []);
     expect([...a.files.entries()]).toEqual([...b.files.entries()]);
+  });
+});
+
+describe('styleRules — borders', () => {
+  const noAsset = () => '';
+  it('emits a single `border` when no sides (all four)', () => {
+    const rules = styleRules({ border: { color: '#ff0000', width: 2 } }, noAsset);
+    expect(rules).toContain('border:2px solid #ff0000');
+  });
+  it('emits per-side `border-<side>` when sides is a subset', () => {
+    const rules = styleRules({ border: { color: 'primary', sides: ['top', 'bottom'] } }, noAsset);
+    expect(rules).toContain('border-top:1px solid var(--color-primary)');
+    expect(rules).toContain('border-bottom:1px solid var(--color-primary)');
+    expect(rules.some((r) => r.startsWith('border:'))).toBe(false);
+    expect(rules.some((r) => r.startsWith('border-left'))).toBe(false);
+  });
+  it('collapses to a single `border` when all four sides are listed', () => {
+    const rules = styleRules({ border: { color: '#000000', sides: ['top', 'right', 'bottom', 'left'] } }, noAsset);
+    expect(rules).toContain('border:1px solid #000000');
+    expect(rules.some((r) => r.startsWith('border-'))).toBe(false);
   });
 });
 

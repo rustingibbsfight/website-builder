@@ -93,19 +93,38 @@ export function Inspector({
     ]);
   };
   const hover = (style.hover as Record<string, unknown>) ?? {};
+  const focus = (style.focus as Record<string, unknown>) ?? {};
 
-  const border = (style.border as { color?: string; width?: number }) ?? {};
-  const setBorder = (key: string, value: unknown) => {
-    const next = { ...border, [key]: value === '' ? undefined : value } as { color?: string; width?: unknown };
+  const border = (style.border as { color?: string; width?: number; sides?: string[] }) ?? {};
+  const commitBorder = (next: { color?: string; width?: unknown; sides?: string[] }) => {
     onOps([
       {
         op: 'update',
         nodeId: node.id,
         style: {
-          border: next.color ? { color: next.color, ...(next.width ? { width: Number(next.width) } : {}) } : null,
+          border: next.color
+            ? {
+                color: next.color,
+                ...(next.width ? { width: Number(next.width) } : {}),
+                // Omit `sides` when it covers all four — that's the plain-border default.
+                ...(next.sides && next.sides.length && next.sides.length < 4 ? { sides: next.sides } : {}),
+              }
+            : null,
         },
       },
     ]);
+  };
+  const setBorder = (key: string, value: unknown) =>
+    commitBorder({ ...border, [key]: value === '' ? undefined : value });
+  const toggleBorderSide = (side: string) => {
+    // Undefined `sides` means all four are on; start from that so clicking a lit
+    // side turns it off (leaving the other three) rather than isolating it.
+    const cur = new Set(border.sides ?? ['top', 'right', 'bottom', 'left']);
+    if (cur.has(side)) cur.delete(side);
+    else cur.add(side);
+    // Zero sides isn't a real state (that's "no border" — clear the colour instead);
+    // fall back to all four. commitBorder omits `sides` when it covers all four.
+    commitBorder({ ...border, sides: cur.size ? [...cur] : ['top', 'right', 'bottom', 'left'] });
   };
 
   // A gradient needs both stops; keep a local draft (Inspector is keyed per node,
@@ -300,6 +319,27 @@ export function Inspector({
             onChange={(v) => setState('hover', 'shadow', v)}
           />
 
+          <div className="style-state-head">Focus state (keyboard)</div>
+          <Select
+            label="focus background"
+            testId="style-focus-background"
+            value={(focus.background as string) ?? ''}
+            options={COLOR_TOKENS}
+            onChange={(v) => setState('focus', 'background', v)}
+          />
+          <Select
+            label="focus text"
+            value={(focus.color as string) ?? ''}
+            options={COLOR_TOKENS}
+            onChange={(v) => setState('focus', 'color', v)}
+          />
+          <Select
+            label="focus shadow"
+            value={(focus.shadow as string) ?? ''}
+            options={['', 'none', 'sm', 'md', 'lg']}
+            onChange={(v) => setState('focus', 'shadow', v)}
+          />
+
           <div className="style-state-head">Typography</div>
           <Select
             label="weight"
@@ -323,6 +363,7 @@ export function Inspector({
           <div className="style-state-head">Border</div>
           <Select
             label="border color"
+            testId="style-border-color"
             value={(border.color as string) ?? ''}
             options={COLOR_TOKENS}
             onChange={(v) => setBorder('color', v)}
@@ -333,6 +374,29 @@ export function Inspector({
             options={['', '1', '2']}
             onChange={(v) => setBorder('width', v)}
           />
+          {border.color && (
+            <label className="field">
+              <span>sides</span>
+              <span className="side-toggles" data-testid="style-border-sides">
+                {(['top', 'right', 'bottom', 'left'] as const).map((side) => {
+                  const on = !border.sides || border.sides.includes(side);
+                  return (
+                    <button
+                      key={side}
+                      type="button"
+                      className={`side-toggle${on ? ' on' : ''}`}
+                      data-testid={`style-border-side-${side}`}
+                      aria-pressed={on}
+                      title={side}
+                      onClick={() => toggleBorderSide(side)}
+                    >
+                      {side[0]?.toUpperCase()}
+                    </button>
+                  );
+                })}
+              </span>
+            </label>
+          )}
 
           <div className="style-state-head">Gradient background</div>
           <Select

@@ -83,7 +83,16 @@ export const StyleSchema = z
     radius: RadiusTokenSchema.optional(),
     shadow: ShadowTokenSchema.optional(),
     border: z
-      .object({ color: ColorTokenSchema, width: z.union([z.literal(1), z.literal(2)]).optional() })
+      .object({
+        color: ColorTokenSchema,
+        width: z.union([z.literal(1), z.literal(2)]).optional(),
+        sides: z
+          .array(z.enum(['top', 'right', 'bottom', 'left']))
+          .min(1)
+          .max(4)
+          .optional()
+          .describe('Limit the border to these sides (default: all four)'),
+      })
       .optional(),
     minHeight: z.enum(['auto', 'half', 'screen']).optional().describe('Minimum height: half/full viewport'),
     hover: StateStyleSchema.optional().describe('Style applied on hover (pure CSS)'),
