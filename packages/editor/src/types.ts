@@ -34,6 +34,14 @@ export interface Page {
   tree: WbNode;
 }
 
+export interface TemplateInfo {
+  name: string;
+  title: string;
+  description: string;
+  pages: string[];
+  brandable: string[];
+}
+
 export interface BlockSummary {
   id: string;
   name: string;

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { api } from './api';
 import { Editor } from './Editor';
-import type { Site } from './types';
+import type { Site, TemplateInfo } from './types';
 
 function siteIdFromPath(): string | null {
   const m = window.location.pathname.match(/^\/editor\/([^/]+)/);
@@ -74,22 +74,70 @@ function TokenGate({ onAuthed }: { onAuthed: () => void }) {
 
 function SiteList({ onOpen }: { onOpen: (id: string) => void }) {
   const [sites, setSites] = useState<Site[] | null>(null);
+  const [templates, setTemplates] = useState<TemplateInfo[]>([]);
+  const [template, setTemplate] = useState('');
+  const [newName, setNewName] = useState('');
+  const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
     api.listSites().then(setSites).catch((e: Error) => setError(e.message));
+    api
+      .listTemplates()
+      .then((t) => {
+        setTemplates(t);
+        setTemplate((cur) => cur || t[0]?.name || '');
+      })
+      .catch(() => {});
   }, []);
+
+  const create = async () => {
+    if (!template) return;
+    try {
+      setCreating(true);
+      setError('');
+      const { site } = await api.createFromTemplate(template, newName.trim() || undefined);
+      onOpen(site.id);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setCreating(false);
+    }
+  };
 
   return (
     <div className="site-list">
       <h1>wb editor</h1>
-      <p className="muted">Pick a site to edit — or create one with the CLI / API / MCP.</p>
-      {error && <p className="error">{error}</p>}
-      {sites?.length === 0 && (
-        <p>
-          No sites yet. Create one: <code>wb create "My Site" --template breakthrough-medical</code>
-        </p>
+      <p className="muted">Pick a site to edit, or start a new one from a template.</p>
+
+      {templates.length > 0 && (
+        <form
+          className="add-page"
+          onSubmit={(e) => {
+            e.preventDefault();
+            void create();
+          }}
+        >
+          <select value={template} onChange={(e) => setTemplate(e.target.value)} data-testid="new-template">
+            {templates.map((t) => (
+              <option key={t.name} value={t.name} title={t.description}>
+                {t.title}
+              </option>
+            ))}
+          </select>
+          <input
+            placeholder="Site name (optional)"
+            value={newName}
+            data-testid="new-name"
+            onChange={(e) => setNewName(e.target.value)}
+          />
+          <button type="submit" className="primary" disabled={creating} data-testid="new-create">
+            {creating ? 'Creating…' : 'Create site'}
+          </button>
+        </form>
       )}
+
+      {error && <p className="error">{error}</p>}
       <ul>
         {sites?.map((s) => (
           <li key={s.id}>

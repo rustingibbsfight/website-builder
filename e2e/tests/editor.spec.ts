@@ -342,6 +342,23 @@ test.describe('visual editor', () => {
       .toBe('Fresh **copy** here');
     await expect(frame.locator('.c-richText strong')).toHaveText('copy');
   });
+
+  test('create a new site from a template in the site list', async ({ page }) => {
+    await page.goto(`${BASE}/editor/`);
+    await page.getByTestId('new-template').waitFor();
+    await page.getByTestId('new-template').selectOption('saas-landing');
+    await page.getByTestId('new-name').fill('E2E Template Site');
+    await page.getByTestId('new-create').click();
+
+    // Lands directly in the editor for the freshly created site.
+    await expect(page.getByTestId('canvas-frame')).toBeVisible();
+    await expect(page.locator('.editor .toolbar .brand')).toHaveText('E2E Template Site');
+
+    // Cleanup so the shared fixture DB stays clean.
+    const sites = (await (await page.request.get(`${BASE}/sites`)).json()) as Array<{ id: string; name: string }>;
+    const created = sites.find((s) => s.name === 'E2E Template Site');
+    if (created) await page.request.delete(`${BASE}/sites/${created.id}`);
+  });
 });
 
 interface WbNodeLike {

@@ -36,6 +36,7 @@ import {
   type WbNode,
 } from '@wb/schema';
 import { buildBreakthroughMedical, TEMPLATE_META, type BrandOverrides } from '@wb/template-breakthrough-medical';
+import { STARTER_TEMPLATES } from './starter-templates.js';
 import type { Client } from '@libsql/client';
 import { randomBytes } from 'node:crypto';
 import { rmSync } from 'node:fs';
@@ -58,6 +59,7 @@ export interface TemplateInfo {
 
 const TEMPLATES: Record<string, { meta: TemplateInfo; build: (brand?: BrandOverrides) => SiteInput }> = {
   'breakthrough-medical': { meta: TEMPLATE_META, build: buildBreakthroughMedical },
+  ...STARTER_TEMPLATES,
 };
 
 export interface PublishResult {

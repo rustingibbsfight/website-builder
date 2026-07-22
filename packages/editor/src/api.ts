@@ -7,6 +7,7 @@ import type {
   PageMeta,
   PageSummary,
   Site,
+  TemplateInfo,
   Theme,
   TreeOp,
   WbNode,
@@ -40,6 +41,12 @@ export const api = {
   login: (token: string) =>
     req<{ ok: boolean }>('/auth/login', { method: 'POST', body: JSON.stringify({ token }) }),
   listSites: () => req<Site[]>('/sites'),
+  listTemplates: () => req<TemplateInfo[]>('/templates'),
+  createFromTemplate: (template: string, name?: string) =>
+    req<{ site: Site }>('/sites/from-template', {
+      method: 'POST',
+      body: JSON.stringify(name ? { template, name } : { template }),
+    }),
   getSite: (siteId: string) => req<Site>(`/sites/${siteId}`),
   listPages: (siteId: string) => req<PageSummary[]>(`/sites/${siteId}/pages`),
   getPage: (siteId: string, pageId: string) => req<Page>(`/sites/${siteId}/pages/${pageId}`),
