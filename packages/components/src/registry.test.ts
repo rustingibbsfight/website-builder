@@ -17,8 +17,8 @@ const ctx: RenderCtx = {
 };
 
 describe('component registry', () => {
-  it('registers all 23 components', () => {
-    expect(listComponents().length).toBe(23);
+  it('registers all 27 components', () => {
+    expect(listComponents().length).toBe(27);
   });
 
   it('every component validates its own defaultProps and renders them', () => {
