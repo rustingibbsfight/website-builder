@@ -55,6 +55,47 @@ describe('applyOps', () => {
     expect(findNode(next, 'sec2')!.children!.map((c) => c.id)).toEqual(['p1']);
   });
 
+  it('reorders within the same parent without overshooting (index is caller-relative)', () => {
+    // A container [a, b, c]; `index` is a slot as the caller sees it (with the
+    // moving node still present) — the drop indicator between two children.
+    const abc = (): WbNode => ({
+      id: 'root',
+      type: 'page-root',
+      props: {},
+      children: [
+        { id: 'a', type: 'text', props: { text: 'A' } },
+        { id: 'b', type: 'text', props: { text: 'B' } },
+        { id: 'c', type: 'text', props: { text: 'C' } },
+      ],
+    });
+    const order = (t: WbNode) => t.children!.map((n) => n.id);
+
+    // Move A down to the slot between B and C → B, A, C (not B, C, A).
+    expect(order(applyOps(abc(), [{ op: 'move', nodeId: 'a', parentId: 'root', index: 2 }]))).toEqual([
+      'b',
+      'a',
+      'c',
+    ]);
+    // Move C up to the slot between A and B → A, C, B.
+    expect(order(applyOps(abc(), [{ op: 'move', nodeId: 'c', parentId: 'root', index: 1 }]))).toEqual([
+      'a',
+      'c',
+      'b',
+    ]);
+    // Move A to the very end.
+    expect(order(applyOps(abc(), [{ op: 'move', nodeId: 'a', parentId: 'root', index: 3 }]))).toEqual([
+      'b',
+      'c',
+      'a',
+    ]);
+    // No-op: move A to its own slot 0 stays put.
+    expect(order(applyOps(abc(), [{ op: 'move', nodeId: 'a', parentId: 'root', index: 0 }]))).toEqual([
+      'a',
+      'b',
+      'c',
+    ]);
+  });
+
   it('rejects moving a node into its own descendant', () => {
     expect(() => applyOps(tree(), [{ op: 'move', nodeId: 'sec1', parentId: 'h1', index: 0 }])).toThrow(
       /own descendant/,
