@@ -17,6 +17,7 @@ import {
   type Style,
   type WbNode,
 } from '@wb/schema';
+import { reIdSubtree } from './render-page.js';
 
 export interface CssTree {
   root: WbNode;
@@ -207,7 +208,9 @@ export function renderCss(site: Site, trees: CssTree[], resolveAsset: RenderCtx[
       usedTypes.add('symbolInstance');
       const symId = String((node.props as { symbolId?: unknown })?.symbolId ?? '');
       const def = symId ? symbols[symId] : undefined;
-      if (def && !stack.includes(symId)) visit(def, scope, [...stack, symId]);
+      // Re-id the definition per instance so CSS selectors match the (also
+      // re-id'd) inlined HTML and don't collide across instances (#26).
+      if (def && !stack.includes(symId)) visit(reIdSubtree(def, `${node.id}_`), scope, [...stack, symId]);
       return;
     }
     usedTypes.add(node.type);

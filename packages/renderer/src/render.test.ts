@@ -198,6 +198,40 @@ describe('symbols (#26)', () => {
     expect(html).not.toContain('Shared CTA');
   });
 
+  it('re-ids the definition per instance so element ids + per-node CSS do not collide', () => {
+    // gallery (`:target` ids) and tabs (radio `id`/`name` + per-node `:checked` CSS)
+    // both rely on page-unique node ids; instancing must keep them distinct.
+    const def: WbNode = {
+      id: 's',
+      type: 'section',
+      props: {},
+      children: [
+        { id: 'g', type: 'gallery', props: { lightbox: true, images: [{ url: '/a.jpg', alt: 'A' }] } },
+        { id: 't', type: 'tabs', props: { tabs: [{ label: 'One', body: 'a' }, { label: 'Two', body: 'b' }] } },
+      ],
+    };
+    const tree: WbNode = {
+      id: 'root1',
+      type: 'page-root',
+      props: {},
+      children: [
+        { id: 'i1', type: 'symbolInstance', props: { symbolId: 's' } },
+        { id: 'i2', type: 'symbolInstance', props: { symbolId: 's' } },
+      ],
+    };
+    const { files } = renderSite(site({ symbols: { s: def } }), [page('', tree)], []);
+    const html = files.get('index.html')!;
+    const css = files.get('styles.css')!;
+    // Gallery lightbox + tabs radio ids are distinct per instance (no collision).
+    expect(html).toContain('id="wb-lb-i1_g-0"');
+    expect(html).toContain('id="wb-lb-i2_g-0"');
+    expect(html).toContain('id="wb-tabs-i1_t-0"');
+    expect(html).toContain('id="wb-tabs-i2_t-0"');
+    // Per-node CSS targets the same re-id'd ids (HTML and CSS stay in sync).
+    expect(css).toContain('#wb-tabs-i1_t-0:checked');
+    expect(css).toContain('#wb-tabs-i2_t-0:checked');
+  });
+
   it('missing symbol renders nothing in publish; is cycle-safe', () => {
     const cyclic: WbNode = { id: 'sa', type: 'symbolInstance', props: { symbolId: 'a' } };
     const tree: WbNode = {
