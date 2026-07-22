@@ -49,6 +49,11 @@ export interface Submission {
   createdAt: string;
 }
 
+export interface SymbolSummary {
+  id: string;
+  rootType: string;
+}
+
 export interface BlockSummary {
   id: string;
   name: string;

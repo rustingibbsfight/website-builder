@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api';
 import { Inspector } from './Inspector';
-import { BlocksPanel, OutlineTree, Palette, PagesPanel } from './panels';
+import { BlocksPanel, OutlineTree, Palette, PagesPanel, SymbolsPanel } from './panels';
 import { SeoDialog } from './SeoDialog';
 import { SubmissionsDialog } from './SubmissionsDialog';
 import { ThemeDialog } from './ThemeDialog';
 import { collectContainerIds, findNode, findParent, stripIds } from './tree-utils';
-import type { BlockSummary, ComponentSummary, Page, PageSummary, Site, TreeOp, WbNode } from './types';
+import type { BlockSummary, ComponentSummary, Page, PageSummary, Site, SymbolSummary, TreeOp, WbNode } from './types';
 
 const VIEWPORTS = { desktop: '100%', tablet: '834px', mobile: '390px' } as const;
 type Viewport = keyof typeof VIEWPORTS;
@@ -46,6 +46,7 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
   const [page, setPage] = useState<Page | null>(null);
   const [components, setComponents] = useState<ComponentSummary[]>([]);
   const [blocks, setBlocks] = useState<BlockSummary[]>([]);
+  const [symbols, setSymbols] = useState<SymbolSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [viewport, setViewport] = useState<Viewport>('desktop');
   const [status, setStatus] = useState('');
@@ -70,6 +71,7 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
     api.getSite(siteId).then(setSite).catch((e: Error) => setStatus(`error: ${e.message}`));
     api.listComponents().then(setComponents).catch(() => {});
     api.listBlocks().then(setBlocks).catch(() => {});
+    api.listSymbols(siteId).then(setSymbols).catch(() => {});
     api
       .listPages(siteId)
       .then((list) => {
@@ -275,6 +277,42 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
     [page, selectedId],
   );
 
+  // ── Symbols (#26) ──────────────────────────────────────────────────────────
+  const insertSymbolInstance = useCallback(
+    (symbolId: string) => {
+      if (!page) return;
+      // Into the selected container, else the page root.
+      const parentId = selectedId && isContainer(selectedNode?.type ?? '') ? selectedId : page.tree.id;
+      void mutate([{ op: 'insert', parentId, node: { type: 'symbolInstance', props: { symbolId } } as never }]);
+    },
+    [page, selectedId, selectedNode, isContainer, mutate],
+  );
+
+  const createSymbolFromSelection = useCallback(async () => {
+    if (!page || !selectedId || !selectedNode || selectedId === page.tree.id) return;
+    if (selectedNode.type === 'symbolInstance') return; // already an instance
+    const found = findParent(page.tree, selectedId);
+    if (!found) return;
+    // Unique id from the node type.
+    const base = selectedNode.type.replace(/[^a-zA-Z0-9]/g, '') || 'symbol';
+    const existing = new Set(symbols.map((s) => s.id));
+    let id = base;
+    for (let i = 2; existing.has(id); i++) id = `${base}-${i}`;
+    try {
+      await api.setSymbol(siteId, id, stripIds(selectedNode) as WbNode);
+      // Replace the selection with an instance in the same spot (one atomic op batch).
+      await mutate([
+        { op: 'insert', parentId: found.parent.id, index: found.index, node: { type: 'symbolInstance', props: { symbolId: id } } as never },
+        { op: 'remove', nodeId: selectedId },
+      ]);
+      setSelectedId(null);
+      api.listSymbols(siteId).then(setSymbols).catch(() => {});
+      setStatus(`made symbol “${id}”`);
+    } catch (e) {
+      setStatus(`error: ${(e as Error).message}`);
+    }
+  }, [page, selectedId, selectedNode, symbols, siteId, mutate]);
+
   // ── Node actions ───────────────────────────────────────────────────────────
   const deleteSelected = useCallback(() => {
     if (selectedId && page && selectedId !== page.tree.id) {
@@ -455,6 +493,12 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
           void insertComponent(type, parentId);
         }} />
         <BlocksPanel blocks={blocks} onInsert={(id) => void insertBlock(id)} />
+        <SymbolsPanel
+          symbols={symbols}
+          hasSelection={Boolean(selectedId && page && selectedId !== page.tree.id && selectedNode?.type !== 'symbolInstance')}
+          onInsert={insertSymbolInstance}
+          onCreateFromSelection={() => void createSymbolFromSelection()}
+        />
         <OutlineTree
           root={page.tree}
           selectedId={selectedId}

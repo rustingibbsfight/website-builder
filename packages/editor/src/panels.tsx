@@ -1,6 +1,55 @@
 import { useState } from 'react';
 import { nodeLabel } from './tree-utils';
-import type { BlockSummary, ComponentSummary, PageSummary, WbNode } from './types';
+import type { BlockSummary, ComponentSummary, PageSummary, SymbolSummary, WbNode } from './types';
+
+export function SymbolsPanel({
+  symbols,
+  hasSelection,
+  onInsert,
+  onCreateFromSelection,
+}: {
+  symbols: SymbolSummary[];
+  hasSelection: boolean;
+  onInsert: (id: string) => void;
+  onCreateFromSelection: () => void;
+}) {
+  return (
+    <section className="panel palette">
+      <h2>Symbols</h2>
+      <p className="hint">Reusable blocks — edit the definition and every instance updates.</p>
+      <button
+        type="button"
+        className="wide-btn"
+        data-testid="symbol-create"
+        disabled={!hasSelection}
+        title={hasSelection ? 'Turn the selected element into a reusable symbol' : 'Select an element first'}
+        onClick={onCreateFromSelection}
+      >
+        ＋ Make symbol from selection
+      </button>
+      {symbols.length === 0 ? (
+        <p className="hint" data-testid="symbols-empty">
+          No symbols yet.
+        </p>
+      ) : (
+        <div className="palette-grid">
+          {symbols.map((s) => (
+            <button
+              key={s.id}
+              type="button"
+              className="palette-item"
+              title={`Insert the "${s.id}" symbol (${s.rootType})`}
+              data-testid={`symbol-${s.id}`}
+              onClick={() => onInsert(s.id)}
+            >
+              {s.id}
+            </button>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
 
 export function BlocksPanel({
   blocks,
