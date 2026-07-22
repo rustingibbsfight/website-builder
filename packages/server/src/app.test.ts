@@ -217,6 +217,46 @@ describe('REST API', () => {
     expect(cyc.statusCode).toBe(422);
   });
 
+  it('submission endpoint bounds body size for any content-type (#27 hardening)', async () => {
+    const site = (await app.inject({ method: 'POST', url: '/sites', payload: { name: 'BodyLimit' } })).json() as { id: string };
+    const big = 'x'.repeat(100 * 1024); // 100 KB > the 64 KB route cap
+    const urlenc = await app.inject({
+      method: 'POST',
+      url: `/sites/${site.id}/submissions/c`,
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      payload: `name=${big}`,
+    });
+    expect(urlenc.statusCode).toBe(413);
+    // JSON would otherwise ride the 30 MB global limit on this public endpoint.
+    const json = await app.inject({
+      method: 'POST',
+      url: `/sites/${site.id}/submissions/c`,
+      headers: { 'content-type': 'application/json' },
+      payload: JSON.stringify({ name: big }),
+    });
+    expect(json.statusCode).toBe(413);
+  });
+
+  it('submission endpoint rate-limits a flooding IP (#27 hardening)', async () => {
+    const site = (await app.inject({ method: 'POST', url: '/sites', payload: { name: 'RateLimit' } })).json() as { id: string };
+    const ip = '203.0.113.7'; // unique IP so the module-level limiter stays isolated
+    let got429 = false;
+    for (let i = 0; i < 40; i++) {
+      const r = await app.inject({
+        method: 'POST',
+        url: `/sites/${site.id}/submissions/c`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        remoteAddress: ip,
+        payload: 'name=x',
+      });
+      if (r.statusCode === 429) {
+        got429 = true;
+        break;
+      }
+    }
+    expect(got429).toBe(true);
+  });
+
   it('uploads assets as base64 json', async () => {
     const site = (
       await app.inject({ method: 'POST', url: '/sites', payload: { name: 'Asset API' } })

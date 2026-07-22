@@ -47,6 +47,26 @@ function resolveEditorDist(): string | null {
   }
 }
 
+/**
+ * Best-effort in-memory per-IP rate limit for the public submission endpoint.
+ * Resets on serverless cold start (so it is paired with a durable per-site cap
+ * in core); the size guard bounds memory on a long-lived process.
+ */
+const SUBMISSION_MAX_PER_WINDOW = 30;
+const SUBMISSION_WINDOW_MS = 60_000;
+const submissionHits = new Map<string, { count: number; resetAt: number }>();
+function submissionRateLimited(ip: string): boolean {
+  const now = Date.now();
+  if (submissionHits.size > 10_000) submissionHits.clear();
+  const rec = submissionHits.get(ip);
+  if (!rec || now > rec.resetAt) {
+    submissionHits.set(ip, { count: 1, resetAt: now + SUBMISSION_WINDOW_MS });
+    return false;
+  }
+  rec.count += 1;
+  return rec.count > SUBMISSION_MAX_PER_WINDOW;
+}
+
 /** Minimal zero-JS confirmation page returned after a form submission (#27). */
 function thankYouHtml(): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Thanks — message received</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;font:16px/1.6 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#0e1015;color:#e9e9f2}main{max-width:32rem;padding:2rem;text-align:center}h1{font-size:1.6rem;margin:0 0 .5rem}p{color:#9a99ad;margin:0}a{color:#8b7ff4}</style></head><body><main><h1>Thanks — we got it.</h1><p>Your message has been received. You can close this tab and return to the site.</p></main></body></html>`;
@@ -132,7 +152,11 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     if (typeof err.statusCode === 'number' && err.statusCode >= 400 && err.statusCode < 500) {
       return reply.status(err.statusCode).send({ error: err.message });
     }
-    return reply.status(500).send({ error: err.message });
+    // Unmapped fault: don't leak internals (SQL text, filesystem paths) to the
+    // client. Log the real error server-side; return a generic message.
+    // biome-ignore lint/suspicious/noConsole: server-side fault logging
+    console.error('[wb] 500:', err);
+    return reply.status(500).send({ error: 'internal server error' });
   });
 
   app.get('/health', async () => ({ ok: true }));
@@ -232,8 +256,19 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   // stored. Confirmation is a zero-JS server-rendered page.
   app.post(
     '/sites/:siteId/submissions/:formId',
-    { schema: { params: z.object({ siteId: z.string(), formId: z.string().min(1).max(120) }).strict() } },
+    {
+      // Route-level body cap so the 64 KB bound holds for ANY content-type — not
+      // just urlencoded (a JSON body would otherwise ride the 30 MB global limit
+      // on this unauthenticated endpoint).
+      bodyLimit: 64 * 1024,
+      schema: { params: z.object({ siteId: z.string(), formId: z.string().min(1).max(120) }).strict() },
+    },
     async (req, reply) => {
+      // Best-effort per-IP rate limit (in-memory; resets on serverless cold
+      // start, so pair with the per-site cap in core). Blunts rapid floods.
+      if (submissionRateLimited(req.ip || 'unknown')) {
+        return reply.status(429).header('retry-after', '60').send({ error: 'too many submissions — try again shortly' });
+      }
       const body = (req.body ?? {}) as Record<string, string>;
       // Bots fill the hidden `_hp` field; accept silently (don't tip them off)
       // but store nothing.
