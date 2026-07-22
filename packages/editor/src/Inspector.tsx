@@ -94,6 +94,49 @@ export function Inspector({
   };
   const hover = (style.hover as Record<string, unknown>) ?? {};
 
+  const border = (style.border as { color?: string; width?: number }) ?? {};
+  const setBorder = (key: string, value: unknown) => {
+    const next = { ...border, [key]: value === '' ? undefined : value } as { color?: string; width?: unknown };
+    onOps([
+      {
+        op: 'update',
+        nodeId: node.id,
+        style: {
+          border: next.color ? { color: next.color, ...(next.width ? { width: Number(next.width) } : {}) } : null,
+        },
+      },
+    ]);
+  };
+
+  // A gradient needs both stops; keep a local draft (Inspector is keyed per node,
+  // so this resets on selection) so picking "from" before "to" isn't lost, and
+  // an incomplete gradient doesn't clobber an existing background.
+  const committedGrad =
+    typeof style.background === 'object' && style.background && 'gradient' in style.background
+      ? ((style.background as { gradient: Record<string, unknown> }).gradient ?? {})
+      : {};
+  const [grad, setGradDraft] = useState<Record<string, unknown>>(committedGrad);
+  const setGrad = (key: string, value: unknown) => {
+    const next = { ...grad, [key]: value === '' ? undefined : value } as Record<string, unknown>;
+    setGradDraft(next);
+    if (next.from && next.to) {
+      onOps([
+        {
+          op: 'update',
+          nodeId: node.id,
+          style: {
+            background: {
+              gradient: { from: next.from, to: next.to, ...(next.angle != null ? { angle: Number(next.angle) } : {}) },
+            },
+          },
+        },
+      ]);
+    } else if (typeof style.background === 'object' && style.background && 'gradient' in style.background) {
+      // had a committed gradient, now incomplete → clear the background
+      onOps([{ op: 'update', nodeId: node.id, style: { background: null } }]);
+    }
+  };
+
   const setHidden = (bp: 'tablet' | 'mobile', hidden: boolean) => {
     const next = {
       ...responsive,
@@ -256,6 +299,66 @@ export function Inspector({
             options={['', 'none', 'sm', 'md', 'lg']}
             onChange={(v) => setState('hover', 'shadow', v)}
           />
+
+          <div className="style-state-head">Typography</div>
+          <Select
+            label="weight"
+            value={(style.fontWeight as string) ?? ''}
+            options={['', 'normal', 'medium', 'semibold', 'bold']}
+            onChange={(v) => setStyle('fontWeight', v)}
+          />
+          <Select
+            label="letter spacing"
+            value={(style.letterSpacing as string) ?? ''}
+            options={['', 'tight', 'normal', 'wide']}
+            onChange={(v) => setStyle('letterSpacing', v)}
+          />
+          <Select
+            label="text case"
+            value={(style.textTransform as string) ?? ''}
+            options={['', 'none', 'uppercase', 'capitalize']}
+            onChange={(v) => setStyle('textTransform', v)}
+          />
+
+          <div className="style-state-head">Border</div>
+          <Select
+            label="border color"
+            value={(border.color as string) ?? ''}
+            options={COLOR_TOKENS}
+            onChange={(v) => setBorder('color', v)}
+          />
+          <Select
+            label="border width"
+            value={border.width ? String(border.width) : ''}
+            options={['', '1', '2']}
+            onChange={(v) => setBorder('width', v)}
+          />
+
+          <div className="style-state-head">Gradient background</div>
+          <Select
+            label="from"
+            testId="style-grad-from"
+            value={(grad.from as string) ?? ''}
+            options={COLOR_TOKENS}
+            onChange={(v) => setGrad('from', v)}
+          />
+          <Select
+            label="to"
+            testId="style-grad-to"
+            value={(grad.to as string) ?? ''}
+            options={COLOR_TOKENS}
+            onChange={(v) => setGrad('to', v)}
+          />
+          <label className="field">
+            <span>angle</span>
+            <input
+              type="number"
+              min="0"
+              max="360"
+              value={(grad.angle as number) ?? ''}
+              onChange={(e) => setGrad('angle', e.target.value)}
+            />
+          </label>
         </div>
       )}
     </section>

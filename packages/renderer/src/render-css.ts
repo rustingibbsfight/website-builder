@@ -78,6 +78,9 @@ export function styleRules(style: Partial<Style>, resolveAsset: RenderCtx['resol
   if (style.background !== undefined) {
     if (typeof style.background === 'string') {
       rules.push(`background:${colorValue(style.background)}`);
+    } else if ('gradient' in style.background) {
+      const g = style.background.gradient;
+      rules.push(`background:linear-gradient(${g.angle ?? 180}deg,${colorValue(g.from)},${colorValue(g.to)})`);
     } else {
       const url = cssUrl(resolveAsset(style.background.image));
       const overlay = style.background.overlay
@@ -88,6 +91,13 @@ export function styleRules(style: Partial<Style>, resolveAsset: RenderCtx['resol
     }
   }
   if (style.color) rules.push(`color:${colorValue(style.color)}`);
+  if (style.fontWeight) {
+    rules.push(`font-weight:${{ normal: 400, medium: 500, semibold: 600, bold: 700 }[style.fontWeight]}`);
+  }
+  if (style.letterSpacing) {
+    rules.push(`letter-spacing:${{ tight: '-0.02em', normal: 'normal', wide: '0.06em' }[style.letterSpacing]}`);
+  }
+  if (style.textTransform) rules.push(`text-transform:${style.textTransform}`);
   if (style.radius) rules.push(`border-radius:var(--radius-${style.radius})`);
   if (style.shadow && style.shadow !== 'none') {
     const shadows = {

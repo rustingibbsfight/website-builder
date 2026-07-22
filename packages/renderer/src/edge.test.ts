@@ -131,6 +131,27 @@ describe('renderer edge cases', () => {
     expect(html).toContain('<link rel="canonical" href="https://clinic.example/">');
   });
 
+  it('emits gradient backgrounds and typography rules from style', () => {
+    const p = page({ id: 'r', type: 'page-root', props: {}, children: [
+      {
+        id: 'h',
+        type: 'heading',
+        props: { text: 'T', level: 1 },
+        style: {
+          background: { gradient: { from: 'primary', to: 'accent', angle: 90 } },
+          fontWeight: 'bold',
+          letterSpacing: 'wide',
+          textTransform: 'uppercase',
+        },
+      },
+    ] });
+    const css = renderSite(site(), [p], []).files.get('styles.css')!;
+    expect(css).toContain('linear-gradient(90deg,var(--color-primary),var(--color-accent))');
+    expect(css).toContain('font-weight:700');
+    expect(css).toContain('letter-spacing:0.06em');
+    expect(css).toContain('text-transform:uppercase');
+  });
+
   it('emits pure-CSS :hover and :focus-visible rules for interactive states', () => {
     const p = page({ id: 'r', type: 'page-root', props: {}, children: [
       {

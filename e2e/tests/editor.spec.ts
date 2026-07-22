@@ -104,6 +104,22 @@ test.describe('visual editor', () => {
     await page.getByRole('button', { name: /undo/ }).click();
   });
 
+  test('style tab sets a gradient background (pure CSS)', async ({ page }) => {
+    await openEditor(page);
+    await page.locator('.outline-row', { hasText: 'section' }).nth(0).click();
+    await page.getByRole('button', { name: 'style', exact: true }).click();
+    await page.getByTestId('style-grad-from').selectOption('primary');
+    await page.getByTestId('style-grad-to').selectOption('accent');
+    await expect(page.locator('.toolbar .status')).toHaveText(/saved/);
+
+    const sites = (await (await page.request.get(`${BASE}/sites`)).json()) as Array<{ id: string }>;
+    const css = await (await page.request.get(`${BASE}/preview/${sites[0]!.id}/styles.css`)).text();
+    expect(css).toContain('linear-gradient(');
+    expect(css).not.toMatch(/<script|onmouse/i);
+
+    await page.getByRole('button', { name: /undo/ }).click();
+  });
+
   test('delete node removes it from canvas and outline', async ({ page }) => {
     await openEditor(page);
     const frame = page.frameLocator('[data-testid="canvas-frame"]');
