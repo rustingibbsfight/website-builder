@@ -107,6 +107,43 @@ describe('renderer edge cases', () => {
     expect(html).not.toContain('onerror="x"');
   });
 
+  it('emits SEO/OG/Twitter head tags from page meta, with fallbacks', () => {
+    const s = site({ settings: { locale: 'en', baseUrl: 'https://clinic.example' } });
+    const p = page({ id: 'r', type: 'page-root', props: {}, children: [
+      { id: 'h', type: 'heading', props: { text: 'T', level: 1 } },
+    ] }, {
+      meta: {
+        title: 'Custom SEO Title',
+        description: 'Meta desc.',
+        ogImage: 'https://clinic.example/share.png',
+        // ogTitle/ogDescription omitted → fall back to title/description
+      },
+    });
+    const html = renderSite(s, [p], []).files.get('index.html')!;
+    expect(html).toContain('<title>Custom SEO Title</title>');
+    expect(html).toContain('<meta name="description" content="Meta desc.">');
+    expect(html).toContain('<meta property="og:title" content="Custom SEO Title">');
+    expect(html).toContain('<meta property="og:description" content="Meta desc.">');
+    expect(html).toContain('<meta property="og:url" content="https://clinic.example/">');
+    expect(html).toContain('<meta property="og:image" content="https://clinic.example/share.png">');
+    expect(html).toContain('<meta name="twitter:card" content="summary_large_image">');
+    expect(html).toContain('<meta name="twitter:image" content="https://clinic.example/share.png">');
+    expect(html).toContain('<link rel="canonical" href="https://clinic.example/">');
+  });
+
+  it('honors noindex, explicit twitterCard, and social-only overrides', () => {
+    const p = page({ id: 'r', type: 'page-root', props: {}, children: [] }, {
+      meta: { description: 'd', ogTitle: 'Social T', ogDescription: 'Social D', twitterCard: 'summary', noIndex: true },
+    });
+    const html = renderSite(site(), [p], []).files.get('index.html')!;
+    expect(html).toContain('<meta name="robots" content="noindex">');
+    expect(html).toContain('<meta property="og:title" content="Social T">');
+    expect(html).toContain('<meta property="og:description" content="Social D">');
+    expect(html).toContain('<meta name="twitter:card" content="summary">');
+    // no baseUrl → no canonical / og:url
+    expect(html).not.toContain('rel="canonical"');
+  });
+
   it('is deterministic across renders for a complex tree', () => {
     const tree: WbNode = { id: 'r', type: 'page-root', props: {}, children: [
       { id: 'hero', type: 'hero', props: { headline: 'Hi', primaryCta: { label: 'Go', href: '/x' } } },

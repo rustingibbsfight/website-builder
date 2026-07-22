@@ -34,31 +34,50 @@ export function renderNodeHtml(node: WbNode, ctx: RenderCtx): string {
 function headHtml(site: Site, page: Page, resolveAsset: RenderCtx['resolveAsset']): string {
   const brand = site.theme.brandName;
   const slug = normalizeSlug(page.slug);
-  const title = slug === '' ? `${brand} — ${page.title}` : `${page.title} — ${brand}`;
+  const defaultTitle = slug === '' ? `${brand} — ${page.title}` : `${page.title} — ${brand}`;
+  // Per-page overrides (see PageMetaSchema) fall back sensibly: title → default,
+  // og:title → title, og:description → description.
+  const title = page.meta.title || defaultTitle;
+  const description = page.meta.description;
+  const ogTitle = page.meta.ogTitle || title;
+  const ogDescription = page.meta.ogDescription || description;
   const lines = [
     '<meta charset="utf-8">',
     '<meta name="viewport" content="width=device-width, initial-scale=1">',
     `<title>${escapeHtml(title)}</title>`,
   ];
-  if (page.meta.description) {
-    lines.push(`<meta name="description" content="${escapeHtml(page.meta.description)}">`);
+  if (description) {
+    lines.push(`<meta name="description" content="${escapeHtml(description)}">`);
   }
   if (page.meta.noIndex) lines.push('<meta name="robots" content="noindex">');
-  lines.push(`<meta property="og:title" content="${escapeHtml(title)}">`);
-  if (page.meta.description) {
-    lines.push(`<meta property="og:description" content="${escapeHtml(page.meta.description)}">`);
-  }
-  lines.push('<meta property="og:type" content="website">');
+
   const base = site.settings.baseUrl?.replace(/\/$/, '');
   const path = slug === '' ? '/' : `/${slug}/`;
+  // Resolve the OG image to an absolute URL where possible (crawlers need it).
+  let ogImage = '';
+  if (page.meta.ogImage) {
+    ogImage = page.meta.ogImage.startsWith('http')
+      ? page.meta.ogImage
+      : (base ?? '') + resolveAsset({ assetId: page.meta.ogImage });
+  }
+
+  lines.push(`<meta property="og:title" content="${escapeHtml(ogTitle)}">`);
+  if (ogDescription) {
+    lines.push(`<meta property="og:description" content="${escapeHtml(ogDescription)}">`);
+  }
+  lines.push('<meta property="og:type" content="website">');
+  if (base) lines.push(`<meta property="og:url" content="${escapeHtml(base + path)}">`);
+  if (ogImage) lines.push(`<meta property="og:image" content="${escapeHtml(ogImage)}">`);
+
+  // Twitter card mirrors the OG data.
+  const twitterCard = page.meta.twitterCard ?? (ogImage ? 'summary_large_image' : 'summary');
+  lines.push(`<meta name="twitter:card" content="${twitterCard}">`);
+  lines.push(`<meta name="twitter:title" content="${escapeHtml(ogTitle)}">`);
+  if (ogDescription) lines.push(`<meta name="twitter:description" content="${escapeHtml(ogDescription)}">`);
+  if (ogImage) lines.push(`<meta name="twitter:image" content="${escapeHtml(ogImage)}">`);
+
   if (base) {
     lines.push(`<link rel="canonical" href="${escapeHtml(base + path)}">`);
-    if (page.meta.ogImage) {
-      const og = page.meta.ogImage.startsWith('http')
-        ? page.meta.ogImage
-        : base + resolveAsset({ assetId: page.meta.ogImage });
-      lines.push(`<meta property="og:image" content="${escapeHtml(og)}">`);
-    }
   }
   if (site.settings.favicon) {
     const href = site.settings.favicon.startsWith('http')

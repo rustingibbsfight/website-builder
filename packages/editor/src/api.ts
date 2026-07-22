@@ -1,4 +1,14 @@
-import type { ComponentDetail, ComponentSummary, Page, PageSummary, Site, Theme, TreeOp, WbNode } from './types';
+import type {
+  ComponentDetail,
+  ComponentSummary,
+  Page,
+  PageMeta,
+  PageSummary,
+  Site,
+  Theme,
+  TreeOp,
+  WbNode,
+} from './types';
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   // Only advertise a JSON body when there actually is one. Sending
@@ -35,6 +45,8 @@ export const api = {
     req<Page>(`/sites/${siteId}/pages`, { method: 'POST', body: JSON.stringify({ slug, title }) }),
   deletePage: (siteId: string, pageId: string) =>
     req<void>(`/sites/${siteId}/pages/${pageId}`, { method: 'DELETE' }),
+  setPageMeta: (siteId: string, pageId: string, meta: PageMeta) =>
+    req<Page>(`/sites/${siteId}/pages/${pageId}`, { method: 'PATCH', body: JSON.stringify({ meta }) }),
   applyOps: (siteId: string, pageId: string, ops: TreeOp[]) =>
     req<Page>(`/sites/${siteId}/pages/${pageId}/tree/ops`, { method: 'POST', body: JSON.stringify({ ops }) }),
   setTree: (siteId: string, pageId: string, tree: WbNode) =>

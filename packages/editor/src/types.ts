@@ -15,12 +15,22 @@ export interface PageSummary {
   rootId?: string;
 }
 
+export interface PageMeta {
+  title?: string;
+  description?: string;
+  ogTitle?: string;
+  ogDescription?: string;
+  ogImage?: string;
+  twitterCard?: 'summary' | 'summary_large_image';
+  noIndex?: boolean;
+}
+
 export interface Page {
   id: string;
   siteId: string;
   slug: string;
   title: string;
-  meta: { description?: string };
+  meta: PageMeta;
   tree: WbNode;
 }
 
