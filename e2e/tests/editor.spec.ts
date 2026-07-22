@@ -78,6 +78,23 @@ test.describe('visual editor', () => {
     await expect(page.locator('.toolbar .status')).toHaveText(/saved/);
   });
 
+  test('layout tab sets a tablet responsive override that renders as a media query', async ({ page }) => {
+    await openEditor(page);
+    await page.locator('.outline-row', { hasText: 'section' }).nth(0).click();
+    await page.getByRole('button', { name: 'layout', exact: true }).click();
+    // Switch to the tablet breakpoint and override the gap.
+    await page.getByTestId('bp-tablet').click();
+    await page.getByTestId('layout-gap').selectOption('xl');
+    await expect(page.locator('.toolbar .status')).toHaveText(/saved/);
+
+    // The published stylesheet gains a tablet media query carrying that override.
+    const sites = (await (await page.request.get(`${BASE}/sites`)).json()) as Array<{ id: string }>;
+    const css = await (await page.request.get(`${BASE}/preview/${sites[0]!.id}/styles.css`)).text();
+    expect(css).toMatch(/@media[^{]*max-width[^{]*\{[^}]*var\(--space-xl\)/);
+
+    await page.getByRole('button', { name: /undo/ }).click();
+  });
+
   test('style tab sets background token on a section', async ({ page }) => {
     await openEditor(page);
     await page.locator('.outline-row', { hasText: 'section' }).nth(0).click();
