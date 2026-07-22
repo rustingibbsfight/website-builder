@@ -103,11 +103,28 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
         text?: string;
       };
       if (d.type === 'wb:clicked' && d.nodeId) setSelectedId(d.nodeId);
-      if (d.type === 'wb:ready' && selectedId) {
+      if (d.type === 'wb:ready') {
+        // Reloaded canvas: restore selection and re-send the valid drop parents
+        // so in-canvas drag-to-reorder works immediately.
+        if (selectedId) {
+          frameRef.current?.contentWindow?.postMessage(
+            { type: 'wb:select-node', nodeId: selectedId },
+            window.location.origin,
+          );
+        }
         frameRef.current?.contentWindow?.postMessage(
-          { type: 'wb:select-node', nodeId: selectedId },
+          { type: 'wb:set-containers', containerIds: containerIdsRef.current },
           window.location.origin,
         );
+      }
+      // In-canvas drag-to-reorder: the preview computed a target slot; apply it
+      // as a single move op (same slot→final-index compensation as palette drops).
+      if (d.type === 'wb:move-node' && d.nodeId && d.containerId) {
+        const tree = pageRef.current?.tree;
+        const cur = tree ? findParent(tree, d.nodeId) : null;
+        const slot = d.index ?? 0;
+        const finalIndex = cur && cur.parent.id === d.containerId && cur.index < slot ? slot - 1 : slot;
+        mutateRef.current([{ op: 'move', nodeId: d.nodeId, parentId: d.containerId, index: finalIndex }]);
       }
       if (d.type === 'wb:drop-target') {
         dropTarget.current = d.containerId ? { containerId: d.containerId, index: d.index ?? 0 } : null;
@@ -295,6 +312,16 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
     () => (page ? collectContainerIds(page.tree, isContainer) : []),
     [page, isContainer],
   );
+  // Keep a ref (for the message handler) and push the list to the preview so
+  // in-canvas drag-to-reorder can hit-test valid parents.
+  const containerIdsRef = useRef<string[]>(containerIds);
+  useEffect(() => {
+    containerIdsRef.current = containerIds;
+    frameRef.current?.contentWindow?.postMessage(
+      { type: 'wb:set-containers', containerIds },
+      window.location.origin,
+    );
+  }, [containerIds]);
 
   const overlayDragOver = (e: React.DragEvent) => {
     e.preventDefault();
