@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api';
 import { Inspector } from './Inspector';
 import { OutlineTree, Palette, PagesPanel } from './panels';
+import { SeoDialog } from './SeoDialog';
 import { ThemeDialog } from './ThemeDialog';
 import { collectContainerIds, findNode, findParent, stripIds } from './tree-utils';
 import type { ComponentSummary, Page, PageSummary, Site, TreeOp, WbNode } from './types';
@@ -43,6 +44,7 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
   const [viewport, setViewport] = useState<Viewport>('desktop');
   const [status, setStatus] = useState('');
   const [themeOpen, setThemeOpen] = useState(false);
+  const [seoOpen, setSeoOpen] = useState(false);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [frameKey, setFrameKey] = useState(0);
 
@@ -334,6 +336,9 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
         <button type="button" onClick={() => setThemeOpen(true)}>
           🎨 Theme
         </button>
+        <button type="button" onClick={() => setSeoOpen(true)} title="SEO & social for this page" data-testid="seo-open">
+          🔎 SEO
+        </button>
         <a href={previewPath} target="_blank" rel="noreferrer">
           👁 Preview
         </a>
@@ -440,6 +445,15 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
             setSite(await api.getSite(siteId));
             setFrameKey((k) => k + 1);
           }}
+        />
+      )}
+
+      {seoOpen && page && (
+        <SeoDialog
+          site={site}
+          page={page}
+          onClose={() => setSeoOpen(false)}
+          onSaved={(updated) => setPage(updated)}
         />
       )}
     </div>

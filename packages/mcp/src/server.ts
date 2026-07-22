@@ -191,6 +191,30 @@ export function buildMcpServer(deps: McpDeps): McpServer {
   );
 
   server.tool(
+    'set_page_meta',
+    'Set a page’s SEO & Open Graph metadata (partial merge). Controls the <title>, meta description, canonical, og:*/twitter:* tags, and search-engine indexing. Pass an empty string to clear a field.',
+    {
+      siteId: z.string(),
+      pageId: z.string(),
+      title: z.string().optional().describe('SEO <title> override; defaults to the page title + brand'),
+      description: z.string().optional().describe('Meta description'),
+      ogTitle: z.string().optional().describe('Social title override; defaults to the SEO title'),
+      ogDescription: z.string().optional().describe('Social description override; defaults to the meta description'),
+      ogImage: z.string().optional().describe('Open Graph image: an absolute URL or an uploaded asset id'),
+      twitterCard: z.enum(['summary', 'summary_large_image']).optional(),
+      noIndex: z.boolean().optional().describe('Exclude this page from search engines and the sitemap'),
+    },
+    async ({ siteId, pageId, ...meta }) => {
+      try {
+        const page = await core.updatePageMeta(siteId, pageId, { meta });
+        return text({ pageId: page.id, slug: page.slug || '(home)', meta: page.meta });
+      } catch (err) {
+        return errText(err);
+      }
+    },
+  );
+
+  server.tool(
     'set_theme',
     'Update theme tokens (partial merge): colors (hex), fonts (named stacks), brandName, radiusScale, spacingScale. The whole site restyles automatically.',
     {

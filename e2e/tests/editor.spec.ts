@@ -207,6 +207,29 @@ test.describe('visual editor', () => {
     await expect.poll(order).toEqual(['Alpha', 'Bravo', 'Charlie']);
   });
 
+  test('SEO dialog edits page metadata and the renderer emits it', async ({ page }) => {
+    await openEditor(page);
+    await page.getByTestId('seo-open').click();
+    await expect(page.getByTestId('seo-dialog')).toBeVisible();
+
+    await page.getByTestId('seo-title').fill('Custom Home Title');
+    await page.getByTestId('seo-description').fill('A crisp meta description for search.');
+    await page.getByTestId('seo-noindex').check();
+    // live Google preview reflects the typed title
+    await expect(page.getByTestId('seo-dialog')).toContainText('Custom Home Title');
+    await page.getByTestId('seo-save').click();
+    await expect(page.getByTestId('seo-dialog')).not.toBeVisible();
+
+    // Persisted AND emitted by the renderer — fetch the rendered preview head.
+    const sites = (await (await page.request.get(`${BASE}/sites`)).json()) as Array<{ id: string }>;
+    const html = await (await page.request.get(`${BASE}/preview/${sites[0]!.id}/`)).text();
+    expect(html).toContain('<title>Custom Home Title</title>');
+    expect(html).toContain('A crisp meta description for search.');
+    expect(html).toContain('content="noindex"');
+    expect(html).toContain('property="og:title" content="Custom Home Title"');
+    expect(html).toContain('name="twitter:card"');
+  });
+
   test('inline WYSIWYG: double-click a text node and type on the canvas', async ({ page }) => {
     await openEditor(page);
     const frame = page.frameLocator('[data-testid="canvas-frame"]');

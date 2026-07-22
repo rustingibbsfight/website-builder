@@ -36,7 +36,7 @@ const textOf = (result: unknown): string => {
 };
 
 describe('MCP server', () => {
-  it('exposes the 11 tools', async () => {
+  it('exposes the 12 tools', async () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
       'add_asset',
@@ -49,8 +49,38 @@ describe('MCP server', () => {
       'list_templates',
       'preview_site',
       'publish_site',
+      'set_page_meta',
       'set_theme',
     ]);
+  });
+
+  it('set_page_meta updates SEO/OG metadata programmatically', async () => {
+    const created = await client.callTool({
+      name: 'create_site',
+      arguments: { name: 'SEO Clinic', template: 'breakthrough-medical' },
+    });
+    const { siteId, pages } = JSON.parse(textOf(created)) as {
+      siteId: string;
+      pages: Array<{ id: string; slug: string }>;
+    };
+    const home = pages.find((p) => p.slug === '' || p.slug === 'index') ?? pages[0]!;
+    const res = await client.callTool({
+      name: 'set_page_meta',
+      arguments: {
+        siteId,
+        pageId: home.id,
+        title: 'Weight loss that works — Clinic',
+        description: 'Physician-supervised care.',
+        ogImage: 'https://clinic.example/og.png',
+        noIndex: false,
+      },
+    });
+    const out = JSON.parse(textOf(res)) as { meta: Record<string, unknown> };
+    expect(out.meta.title).toBe('Weight loss that works — Clinic');
+    expect(out.meta.ogImage).toBe('https://clinic.example/og.png');
+    // and it round-trips through the renderer
+    const page = await core.getPage(siteId, home.id);
+    expect(page.meta.description).toBe('Physician-supervised care.');
   });
 
   it('northstar flow: create_site → get_page → edit_page → publish_site', async () => {

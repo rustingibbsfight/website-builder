@@ -6,8 +6,18 @@ export const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 export const PageMetaSchema = z
   .object({
+    title: z.string().optional().describe('SEO <title> override; defaults to the page title + brand'),
     description: z.string().optional().describe('Meta description for SEO'),
+    ogTitle: z.string().optional().describe('Open Graph / social title override; defaults to the SEO title'),
+    ogDescription: z
+      .string()
+      .optional()
+      .describe('Open Graph / social description override; defaults to the meta description'),
     ogImage: z.string().optional().describe('Open Graph image URL or asset id'),
+    twitterCard: z
+      .enum(['summary', 'summary_large_image'])
+      .optional()
+      .describe('Twitter card type; defaults to summary_large_image when an ogImage is set'),
     noIndex: z.boolean().optional().describe('Exclude from search engines and sitemap'),
   })
   .strict();
