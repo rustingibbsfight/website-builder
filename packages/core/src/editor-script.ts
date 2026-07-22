@@ -98,8 +98,19 @@ document.addEventListener('mousedown',function(e){
   if(!el||el.getAttribute('data-node-id')!==selected)return;
   dragCand=selected;dragEl=el;dragging=false;dragSX=e.clientX;dragSY=e.clientY;
 },true);
+function cancelReorder(){
+  if(!dragCand)return;
+  dragCand=null;dragging=false;dragTarget=null;
+  indicator.style.display='none';
+  if(dragEl)dragEl.classList.remove('wb-ed-dragging');
+  dragEl=null;
+  positionPadGrip();
+}
 document.addEventListener('mousemove',function(e){
   if(!dragCand||editing)return;
+  // The primary button was released — possibly outside the iframe, where we
+  // never saw mouseup. Abort so state can't wedge (no phantom move on next click).
+  if((e.buttons&1)===0){cancelReorder();return;}
   if(!dragging){
     if(Math.abs(e.clientX-dragSX)+Math.abs(e.clientY-dragSY)<5)return;
     dragging=true;
@@ -172,10 +183,18 @@ function nearestTokenIndex(px,scale){
   for(var i=0;i<scale.length;i++){var d=Math.abs(scale[i].px-px);if(d<bd){bd=d;best=i;}}
   return best;
 }
+function padCancel(){
+  if(!padDrag)return;
+  padDrag.el.style.padding='';
+  padDrag=null;padLabel.style.display='none';
+  positionPadGrip();
+}
 function positionPadGrip(){
   if(!selected||dragging||editing||padDrag||containerIds.indexOf(selected)===-1){padGrip.style.display='none';return;}
   var el=document.querySelector('[data-node-id="'+selected+'"]');
-  if(!el){padGrip.style.display='none';return;}
+  // No grip on the page-root — padding it isn't meaningful and the rest of the
+  // editor treats the root as non-editable.
+  if(!el||el.classList.contains('c-page-root')){padGrip.style.display='none';return;}
   var r=el.getBoundingClientRect();
   padGrip.style.display='block';
   padGrip.style.left=(r.left+r.width/2+scrollX)+'px';
@@ -188,11 +207,15 @@ padGrip.addEventListener('mousedown',function(e){
   if(!el)return;
   var scale=spaceScale();
   var curPx=parseFloat(getComputedStyle(el).paddingTop)||0;
-  padDrag={startY:e.clientY,index:nearestTokenIndex(curPx,scale),scale:scale,el:el,node:selected,token:null};
+  var index=nearestTokenIndex(curPx,scale);
+  // Remember the starting token so a mere click (no token change) commits nothing.
+  padDrag={startY:e.clientY,index:index,startToken:scale[index].token,scale:scale,el:el,node:selected,token:null};
   padLabel.style.display='block';
+  padLabel.textContent='padding: '+scale[index].token;
 },true);
 document.addEventListener('mousemove',function(e){
   if(!padDrag)return;
+  if((e.buttons&1)===0){padCancel();return;} // released (maybe outside) → abort
   e.preventDefault();
   var steps=Math.round((e.clientY-padDrag.startY)/18);
   var idx=Math.max(0,Math.min(padDrag.scale.length-1,padDrag.index+steps));
@@ -206,10 +229,12 @@ document.addEventListener('mousemove',function(e){
 },true);
 document.addEventListener('mouseup',function(){
   if(!padDrag)return;
-  var token=padDrag.token,node=padDrag.node,el=padDrag.el;
+  var token=padDrag.token,startToken=padDrag.startToken,node=padDrag.node,el=padDrag.el;
   padDrag=null;padLabel.style.display='none';
   el.style.padding='';
-  if(token!==null)send({type:'wb:set-layout',nodeId:node,key:'padding',value:token});
+  // Only commit a real change — a click (or drag back to the start) is a no-op.
+  if(token!==null&&token!==startToken)send({type:'wb:set-layout',nodeId:node,key:'padding',value:token});
+  positionPadGrip();
 },true);
 addEventListener('scroll',positionPadGrip,true);
 addEventListener('resize',positionPadGrip);

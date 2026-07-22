@@ -481,6 +481,21 @@ test.describe('visual editor', () => {
     await page.mouse.up();
 
     await expect.poll(order).toEqual(['Dos', 'Tres', 'Uno']);
+
+    // Regression: a drag whose mouse-up lands OUTSIDE the iframe must not wedge
+    // the drag state and cause a phantom move on the next click.
+    const dos = frame.locator('.c-heading', { hasText: 'Dos' });
+    const dosBox = (await dos.boundingBox())!;
+    const frameBox = (await page.locator('[data-testid="canvas-frame"]').boundingBox())!;
+    await dos.click();
+    await page.mouse.move(dosBox.x + dosBox.width / 2, dosBox.y + dosBox.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(dosBox.x + dosBox.width / 2, dosBox.y + dosBox.height / 2 + 20, { steps: 4 }); // arm the drag
+    await page.mouse.move(Math.max(2, frameBox.x - 40), dosBox.y, { steps: 4 }); // leave the iframe (over the left panel)
+    await page.mouse.up(); // released outside — iframe never sees mouseup
+    // Return to the canvas and click a different node; order must be unchanged.
+    await frame.locator('.c-heading', { hasText: 'Tres' }).click();
+    await expect.poll(order).toEqual(['Dos', 'Tres', 'Uno']);
   });
 
   test('SEO dialog edits page metadata and the renderer emits it', async ({ page }) => {
