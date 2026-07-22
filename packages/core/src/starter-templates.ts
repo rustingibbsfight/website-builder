@@ -109,11 +109,11 @@ function buildSaasLanding(brand: BrandOverrides = {}): SiteInput {
         title: 'Pricing',
         meta: { description: 'Simple, transparent pricing for teams of any size.' },
         tree: root([
+          { type: 'heading', props: { text: 'Simple pricing', level: 1, align: 'center' } },
+          { type: 'text', props: { text: 'Start free, upgrade when you grow.', align: 'center' } },
           {
             type: 'pricingTable',
             props: {
-              heading: 'Simple pricing',
-              subhead: 'Start free, upgrade when you grow.',
               plans: [
                 { name: 'Free', price: '$0', period: '/mo', features: ['Up to 3 members', 'Core features', 'Community support'], highlighted: false },
                 { name: 'Team', price: '$12', period: '/user/mo', features: ['Unlimited members', 'Automations', 'Priority support'], cta: { label: 'Start free', href: '/contact/' }, highlighted: true },
@@ -128,7 +128,8 @@ function buildSaasLanding(brand: BrandOverrides = {}): SiteInput {
         title: 'Contact',
         meta: { description: 'Get in touch with the Northwind team.' },
         tree: root([
-          { type: 'contactForm', props: { heading: 'Talk to us', fields: [
+          { type: 'heading', props: { text: 'Talk to us', level: 1, align: 'center' } },
+          { type: 'contactForm', props: { fields: [
             { name: 'name', label: 'Name', type: 'text', required: true },
             { name: 'email', label: 'Work email', type: 'email', required: true },
             { name: 'message', label: 'How can we help?', type: 'textarea', required: true },
@@ -218,7 +219,8 @@ function buildLocalService(brand: BrandOverrides = {}): SiteInput {
         title: 'Contact',
         meta: { description: 'Request a free quote from Evergreen Landscaping.' },
         tree: root([
-          { type: 'contactForm', props: { heading: 'Request a free quote', fields: [
+          { type: 'heading', props: { text: 'Request a free quote', level: 1, align: 'center' } },
+          { type: 'contactForm', props: { fields: [
             { name: 'name', label: 'Name', type: 'text', required: true },
             { name: 'email', label: 'Email', type: 'email', required: true },
             { name: 'phone', label: 'Phone', type: 'tel', required: false },
@@ -290,7 +292,8 @@ function buildPortfolio(brand: BrandOverrides = {}): SiteInput {
         title: 'Contact',
         meta: { description: 'Start a project with Jordan Ellis.' },
         tree: root([
-          { type: 'contactForm', props: { heading: 'Start a project', fields: [
+          { type: 'heading', props: { text: 'Start a project', level: 1, align: 'center' } },
+          { type: 'contactForm', props: { fields: [
             { name: 'name', label: 'Name', type: 'text', required: true },
             { name: 'email', label: 'Email', type: 'email', required: true },
             { name: 'message', label: 'Tell me about your project', type: 'textarea', required: true },

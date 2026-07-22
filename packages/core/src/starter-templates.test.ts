@@ -34,6 +34,11 @@ describe('starter templates', () => {
       const result = await core.publishSite(site.id);
       expect(result.pageCount).toBe(pages.length);
 
+      // Every page must have exactly one h1 (SEO/accessibility). The publish
+      // linter emits a warning for pages with no h1 (or more than one).
+      const h1Warnings = result.warnings.filter((w) => /h1/.test(w.message));
+      expect(h1Warnings).toEqual([]);
+
       // Home page renders an h1 (the hero) and no unresolved component errors.
       const home = await core.getPage(site.id, '');
       const hasHero = (function find(nd: { type: string; children?: unknown[] }): boolean {
