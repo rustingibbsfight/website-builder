@@ -259,6 +259,24 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     async (req) => core.listSubmissions(req.params.siteId, req.query.formId),
   );
 
+  // ── Reusable symbols (#26) ────────────────────────────────────────────────
+  const SymbolParams = z.object({ siteId: z.string(), symbolId: z.string() }).strict();
+  app.get('/sites/:siteId/symbols', { schema: { params: SiteIdParams } }, async (req) =>
+    core.listSymbols(req.params.siteId),
+  );
+  app.get('/sites/:siteId/symbols/:symbolId', { schema: { params: SymbolParams } }, async (req) =>
+    core.getSymbol(req.params.siteId, req.params.symbolId),
+  );
+  app.put(
+    '/sites/:siteId/symbols/:symbolId',
+    { schema: { params: SymbolParams, body: NodeInputSchema } },
+    async (req) => core.setSymbol(req.params.siteId, req.params.symbolId, req.body),
+  );
+  app.delete('/sites/:siteId/symbols/:symbolId', { schema: { params: SymbolParams } }, async (req, reply) => {
+    await core.deleteSymbol(req.params.siteId, req.params.symbolId);
+    return reply.status(204).send();
+  });
+
   app.get('/sites/:siteId/theme', { schema: { params: SiteIdParams } }, async (req) => (await core.getSite(req.params.siteId)).theme);
 
   app.put(

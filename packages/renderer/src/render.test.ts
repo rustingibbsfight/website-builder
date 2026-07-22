@@ -167,6 +167,57 @@ describe('renderSite', () => {
   });
 });
 
+describe('symbols (#26)', () => {
+  const symDef: WbNode = { id: 'sym-h', type: 'heading', props: { text: 'Shared CTA', level: 2 } };
+  const withInstances = (): WbNode => ({
+    id: 'root1',
+    type: 'page-root',
+    props: {},
+    children: [
+      { id: 'i1', type: 'symbolInstance', props: { symbolId: 'cta' } },
+      { id: 'i2', type: 'symbolInstance', props: { symbolId: 'cta' } },
+    ],
+  });
+
+  it('inlines a symbol definition at every instance (published, no data-node-id)', () => {
+    const { files } = renderSite(site({ symbols: { cta: symDef } }), [page('', withInstances())], []);
+    const html = files.get('index.html')!;
+    // Both instances resolved to the shared heading text.
+    expect(html.match(/Shared CTA/g)?.length).toBe(2);
+    // Publish output inlines the definition (no symbolInstance wrapper markup).
+    expect(html).not.toContain('c-symbolInstance');
+    // The definition's CSS is emitted (heading base class present).
+    expect(files.get('styles.css')).toContain('.c-heading');
+  });
+
+  it('editing the definition updates all instances (single source of truth)', () => {
+    const edited: WbNode = { ...symDef, props: { text: 'New Copy', level: 2 } };
+    const { files } = renderSite(site({ symbols: { cta: edited } }), [page('', withInstances())], []);
+    const html = files.get('index.html')!;
+    expect(html.match(/New Copy/g)?.length).toBe(2);
+    expect(html).not.toContain('Shared CTA');
+  });
+
+  it('missing symbol renders nothing in publish; is cycle-safe', () => {
+    const cyclic: WbNode = { id: 'sa', type: 'symbolInstance', props: { symbolId: 'a' } };
+    const tree: WbNode = {
+      id: 'r',
+      type: 'page-root',
+      props: {},
+      children: [
+        { id: 'm', type: 'symbolInstance', props: { symbolId: 'nope' } },
+        { id: 'c', type: 'symbolInstance', props: { symbolId: 'a' } },
+      ],
+    };
+    // 'a' references itself → must terminate, not hang.
+    const { files } = renderSite(site({ symbols: { a: cyclic } }), [page('', tree)], []);
+    const home = files.get('index.html')!;
+    // A hero/h1 is absent here; that's fine — we only assert it rendered + is finite.
+    expect(typeof home).toBe('string');
+    expect(home).not.toContain('c-symbolInstance'); // nothing resolved, nothing inlined
+  });
+});
+
 describe('styleRules — borders', () => {
   const noAsset = () => '';
   it('emits a single `border` when no sides (all four)', () => {

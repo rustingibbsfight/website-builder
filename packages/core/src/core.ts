@@ -49,6 +49,40 @@ import { createAssetStorage, type AssetStorage } from './storage.js';
 import { createVersionControl, type VersionControl, type VersionControlResult } from './version-control.js';
 import { AssetStore, BuildStore, PageStore, SiteStore, SubmissionStore, type BuildRecord, type SubmissionRecord } from './stores.js';
 
+/** Symbol ids referenced (directly) by a subtree's symbolInstance nodes. */
+function collectSymbolRefs(node: WbNode, out: Set<string>): void {
+  if (node.type === 'symbolInstance') {
+    const s = (node.props as { symbolId?: unknown }).symbolId;
+    if (typeof s === 'string' && s) out.add(s);
+  }
+  for (const child of node.children ?? []) collectSymbolRefs(child, out);
+}
+
+/** All symbol ids transitively reachable from symbols[startId]. If it contains
+ *  startId, the definition references itself (a cycle). */
+function symbolReferences(symbols: Record<string, WbNode>, startId: string): Set<string> {
+  const reachable = new Set<string>();
+  const stack: string[] = [];
+  const seed = symbols[startId];
+  if (seed) {
+    const r = new Set<string>();
+    collectSymbolRefs(seed, r);
+    r.forEach((x) => stack.push(x));
+  }
+  while (stack.length) {
+    const s = stack.pop()!;
+    if (reachable.has(s)) continue;
+    reachable.add(s);
+    const def = symbols[s];
+    if (def) {
+      const r = new Set<string>();
+      collectSymbolRefs(def, r);
+      r.forEach((x) => stack.push(x));
+    }
+  }
+  return reachable;
+}
+
 export interface TemplateInfo {
   name: string;
   title: string;
@@ -355,6 +389,50 @@ export class WbCore {
   async listSubmissions(siteId: string, formId?: string): Promise<SubmissionRecord[]> {
     await this.getSite(siteId);
     return this.submissions.listForSite(siteId, formId);
+  }
+
+  // ── Reusable symbols (#26) ─────────────────────────────────────────────────
+  async listSymbols(siteId: string): Promise<Array<{ id: string; rootType: string }>> {
+    const site = await this.getSite(siteId);
+    return Object.entries(site.symbols ?? {}).map(([id, node]) => ({ id, rootType: node.type }));
+  }
+
+  async getSymbol(siteId: string, symbolId: string): Promise<WbNode> {
+    const site = await this.getSite(siteId);
+    const node = site.symbols?.[symbolId];
+    if (!node) throw new NotFoundError('symbol', symbolId);
+    return node;
+  }
+
+  /** Define or replace a symbol. Validates the subtree and rejects cycles. */
+  async setSymbol(siteId: string, symbolId: string, input: NodeInput): Promise<WbNode> {
+    if (!/^[a-zA-Z0-9][\w-]{0,63}$/.test(symbolId)) {
+      throw new ValidationError(`invalid symbol id "${symbolId}" — use letters, digits, hyphens, underscores`);
+    }
+    const site = await this.getSite(siteId);
+    const node = materializeNode(input, new Set());
+    if (node.type === 'page-root') {
+      throw new ValidationError('a symbol cannot be a page-root — use a section or component as its root');
+    }
+    this.validateTree(node);
+    const symbols = { ...(site.symbols ?? {}), [symbolId]: node };
+    if (symbolReferences(symbols, symbolId).has(symbolId)) {
+      throw new ValidationError(`symbol "${symbolId}" would reference itself (cycle)`);
+    }
+    await this.sites.updateFields(siteId, { symbols }, nowIso());
+    return node;
+  }
+
+  async deleteSymbol(siteId: string, symbolId: string): Promise<void> {
+    const site = await this.getSite(siteId);
+    if (!site.symbols?.[symbolId]) throw new NotFoundError('symbol', symbolId);
+    const symbols = { ...site.symbols };
+    delete symbols[symbolId];
+    await this.sites.updateFields(
+      siteId,
+      { symbols: Object.keys(symbols).length ? symbols : null },
+      nowIso(),
+    );
   }
 
   async setTheme(siteId: string, patch: Partial<Theme>, merge = true): Promise<Site> {

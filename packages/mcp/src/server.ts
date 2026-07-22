@@ -241,6 +241,37 @@ export function buildMcpServer(deps: McpDeps): McpServer {
   );
 
   server.tool(
+    'list_symbols',
+    'List reusable symbols defined on a site (id + root component type). A symbol is a subtree rendered by symbolInstance nodes; editing the definition updates every instance.',
+    { siteId: z.string() },
+    async ({ siteId }) => {
+      try {
+        return text(await core.listSymbols(siteId));
+      } catch (err) {
+        return errText(err);
+      }
+    },
+  );
+
+  server.tool(
+    'set_symbol',
+    'Define or replace a reusable symbol (a subtree). Place it with a symbolInstance node ({type:"symbolInstance",props:{symbolId}}) via edit_page. Cannot be a page-root and cannot reference itself (cycles are rejected).',
+    {
+      siteId: z.string(),
+      symbolId: z.string().describe('Symbol id (letters, digits, hyphens, underscores)'),
+      node: z.record(z.unknown()).describe('The symbol definition subtree (a component node, not a page-root)'),
+    },
+    async ({ siteId, symbolId, node }) => {
+      try {
+        const saved = await core.setSymbol(siteId, symbolId, node as never);
+        return text({ symbolId, rootType: saved.type, rootId: saved.id });
+      } catch (err) {
+        return errText(err);
+      }
+    },
+  );
+
+  server.tool(
     'set_page_meta',
     'Set a page’s SEO & Open Graph metadata (partial merge). Controls the <title>, meta description, canonical, og:*/twitter:* tags, and search-engine indexing. Pass an empty string to clear a field.',
     {

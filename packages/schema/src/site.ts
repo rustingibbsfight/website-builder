@@ -62,6 +62,10 @@ export const SiteSchema = z
     theme: ThemeSchema,
     header: NodeSchema.optional().describe('Shared header tree rendered on every page'),
     footer: NodeSchema.optional().describe('Shared footer tree rendered on every page'),
+    symbols: z
+      .record(z.string(), NodeSchema)
+      .optional()
+      .describe('Reusable symbol definitions (id → subtree); symbolInstance nodes render the resolved definition'),
     settings: SiteSettingsSchema.default({ locale: 'en' }),
     createdAt: z.string(),
     updatedAt: z.string(),
@@ -86,6 +90,7 @@ export interface SiteInput {
   theme: z.infer<typeof ThemeSchema>;
   header?: WbNode;
   footer?: WbNode;
+  symbols?: Record<string, WbNode>;
   settings?: Partial<SiteSettings>;
   pages: Array<{
     slug: string;

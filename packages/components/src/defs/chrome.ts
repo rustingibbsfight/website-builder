@@ -122,4 +122,29 @@ export const footer: ComponentDef<z.infer<typeof footerProps>> = {
 @media (max-width:639px){.wb-footer-grid{grid-template-columns:1fr}}`,
 };
 
-export const chromeDefs = [header, footer];
+// ── Symbol instance ──────────────────────────────────────────────────────────
+// A placeholder that renders a reusable symbol definition (site.symbols[symbolId]).
+// The renderer intercepts this type and inlines the resolved subtree, so this
+// render() is only a fallback (e.g. when symbols aren't in context).
+const symbolInstanceProps = z
+  .object({
+    // Empty is allowed so the default props validate; the renderer treats an
+    // empty/unknown id as a missing symbol (renders nothing / a placeholder).
+    symbolId: z.string().default('').describe('Id of the site symbol to render here'),
+  })
+  .strict();
+
+export const symbolInstance: ComponentDef<z.infer<typeof symbolInstanceProps>> = {
+  type: 'symbolInstance',
+  title: 'Symbol',
+  description: 'Renders a reusable symbol defined once at the site level; edit the definition to update every instance.',
+  category: 'layout',
+  isContainer: false,
+  propsSchema: symbolInstanceProps,
+  defaultProps: { symbolId: '' },
+  render: (node, props) =>
+    el('div', node, `<!-- symbol ${escapeHtml(props.symbolId)} (resolved by the renderer) -->`),
+  baseCss: `.wb-sym-missing{padding:var(--space-md);text-align:center;color:var(--color-textMuted);border:1px dashed color-mix(in srgb, var(--color-text) 30%, transparent);border-radius:var(--radius-sm);font-size:.9rem}`,
+};
+
+export const chromeDefs = [header, footer, symbolInstance];
