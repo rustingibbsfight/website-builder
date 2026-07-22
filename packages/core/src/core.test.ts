@@ -101,6 +101,19 @@ describe('WbCore sites & pages', () => {
     await expect(core.getSymbol(site.id, '__proto__')).rejects.toThrow(NotFoundError);
   });
 
+  it('concurrent setSymbol on different keys does not clobber (atomic json_set) (#26 hardening)', async () => {
+    const site = await core.createSite('Concurrent');
+    await Promise.all([
+      core.setSymbol(site.id, 'x', { type: 'heading', props: { text: 'X', level: 2 } } as never),
+      core.setSymbol(site.id, 'y', { type: 'heading', props: { text: 'Y', level: 2 } } as never),
+    ]);
+    // Both survive — a read-all/write-all would have dropped one.
+    expect((await core.listSymbols(site.id)).map((s) => s.id).sort()).toEqual(['x', 'y']);
+    // Deleting one leaves the other intact.
+    await core.deleteSymbol(site.id, 'x');
+    expect((await core.listSymbols(site.id)).map((s) => s.id)).toEqual(['y']);
+  });
+
   it('rejects invalid component props via ops', async () => {
     const site = await core.createSite('Val Site');
     const page = (await core.listPages(site.id))[0]!;

@@ -443,24 +443,20 @@ export class WbCore {
       throw new ValidationError('a symbol cannot be a page-root — use a section or component as its root');
     }
     this.validateTree(node);
+    // Cycle check against the would-be graph (read snapshot).
     const symbols = { ...(site.symbols ?? {}), [symbolId]: node };
     if (symbolReferences(symbols, symbolId).has(symbolId)) {
       throw new ValidationError(`symbol "${symbolId}" would reference itself (cycle)`);
     }
-    await this.sites.updateFields(siteId, { symbols }, nowIso());
+    // Atomic per-key write so a concurrent edit to a DIFFERENT symbol isn't lost.
+    await this.sites.setSymbol(siteId, symbolId, node, nowIso());
     return node;
   }
 
   async deleteSymbol(siteId: string, symbolId: string): Promise<void> {
     const site = await this.getSite(siteId);
     if (!site.symbols || !Object.hasOwn(site.symbols, symbolId)) throw new NotFoundError('symbol', symbolId);
-    const symbols = { ...site.symbols };
-    delete symbols[symbolId];
-    await this.sites.updateFields(
-      siteId,
-      { symbols: Object.keys(symbols).length ? symbols : null },
-      nowIso(),
-    );
+    await this.sites.removeSymbol(siteId, symbolId, nowIso());
   }
 
   async setTheme(siteId: string, patch: Partial<Theme>, merge = true): Promise<Site> {
