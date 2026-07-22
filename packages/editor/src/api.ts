@@ -7,6 +7,7 @@ import type {
   PageMeta,
   PageSummary,
   Site,
+  Submission,
   TemplateInfo,
   Theme,
   TreeOp,
@@ -60,6 +61,8 @@ export const api = {
     req<Page>(`/sites/${siteId}/pages/${pageId}/tree/ops`, { method: 'POST', body: JSON.stringify({ ops }) }),
   setTree: (siteId: string, pageId: string, tree: WbNode) =>
     req<Page>(`/sites/${siteId}/pages/${pageId}/tree`, { method: 'PUT', body: JSON.stringify(tree) }),
+  listSubmissions: (siteId: string, formId?: string) =>
+    req<Submission[]>(`/sites/${siteId}/submissions${formId ? `?formId=${encodeURIComponent(formId)}` : ''}`),
   listComponents: () => req<ComponentSummary[]>('/components'),
   listBlocks: () => req<BlockSummary[]>('/blocks'),
   getBlock: (id: string) => req<Block>(`/blocks/${id}`),

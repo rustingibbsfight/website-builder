@@ -42,6 +42,13 @@ export interface TemplateInfo {
   brandable: string[];
 }
 
+export interface Submission {
+  id: string;
+  formId: string;
+  data: Record<string, string>;
+  createdAt: string;
+}
+
 export interface BlockSummary {
   id: string;
   name: string;

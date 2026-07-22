@@ -171,6 +171,24 @@ test.describe('visual editor', () => {
     await page.getByRole('button', { name: /undo/ }).click();
   });
 
+  test('submissions dialog lists captured form submissions', async ({ page }) => {
+    const api = page.request;
+    const sites = (await (await api.get(`${BASE}/sites`)).json()) as Array<{ id: string }>;
+    const siteId = sites[0]!.id;
+    // Seed a capture through the public submissions endpoint (as a native form posts).
+    await api.post(`${BASE}/sites/${siteId}/submissions/contact`, {
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      data: 'name=E2E+Tester&email=e2e%40example.com&_hp=',
+    });
+
+    await openEditor(page);
+    await page.getByTestId('submissions-open').click();
+    const dialog = page.getByTestId('submissions-dialog');
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText('contact'); // form group
+    await expect(dialog).toContainText('E2E Tester'); // captured value
+  });
+
   test('delete node removes it from canvas and outline', async ({ page }) => {
     await openEditor(page);
     const frame = page.frameLocator('[data-testid="canvas-frame"]');
