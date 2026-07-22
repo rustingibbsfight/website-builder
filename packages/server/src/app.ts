@@ -1,6 +1,6 @@
 import multipart from '@fastify/multipart';
 import swagger from '@fastify/swagger';
-import { componentJsonSchema, componentSummary, getComponent, listComponents } from '@wb/components';
+import { componentJsonSchema, componentSummary, escapeHtml, getComponent, listComponents } from '@wb/components';
 import { ConflictError, NotFoundError, ValidationError, WbCore } from '@wb/core';
 import {
   NodeInputSchema,
@@ -47,6 +47,11 @@ function resolveEditorDist(): string | null {
   }
 }
 
+/** Minimal zero-JS confirmation page returned after a form submission (#27). */
+function thankYouHtml(): string {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Thanks — message received</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;font:16px/1.6 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#0e1015;color:#e9e9f2}main{max-width:32rem;padding:2rem;text-align:center}h1{font-size:1.6rem;margin:0 0 .5rem}p{color:#9a99ad;margin:0}a{color:#8b7ff4}</style></head><body><main><h1>Thanks — we got it.</h1><p>Your message has been received. You can close this tab and return to the site.</p></main></body></html>`;
+}
+
 export interface BuildAppOptions {
   core: WbCore;
   /** Expose swagger/openapi (on by default). */
@@ -69,6 +74,22 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   app.setValidatorCompiler(validatorCompiler);
   app.setSerializerCompiler(serializerCompiler);
   await app.register(multipart, { limits: { fileSize: 25 * 1024 * 1024 } });
+  // Parse application/x-www-form-urlencoded (native form posts from published
+  // sites → the submissions endpoint). Small bodyLimit here bounds abuse. (#27)
+  app.addContentTypeParser(
+    'application/x-www-form-urlencoded',
+    { parseAs: 'string', bodyLimit: 64 * 1024 },
+    (_req, body, done) => {
+      try {
+        const params = new URLSearchParams(body as string);
+        const obj: Record<string, string> = {};
+        for (const [k, v] of params) obj[k] = v;
+        done(null, obj);
+      } catch (err) {
+        done(err instanceof Error ? err : new Error('invalid form body'), undefined);
+      }
+    },
+  );
   await registerAuth(app, opts.apiToken ?? process.env.WB_API_TOKEN);
 
   if (opts.openapi !== false) {
@@ -199,6 +220,39 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     await core.deleteSite(req.params.siteId);
     return reply.status(204).send();
   });
+
+  // ── Form submissions (#27) ────────────────────────────────────────────────
+  // Public write: a published (static) site POSTs a native form here (no token).
+  // Honeypot + field caps blunt spam; control fields (leading _) are never
+  // stored. Confirmation is a zero-JS server-rendered page.
+  app.post(
+    '/sites/:siteId/submissions/:formId',
+    { schema: { params: z.object({ siteId: z.string(), formId: z.string().min(1).max(120) }).strict() } },
+    async (req, reply) => {
+      const body = (req.body ?? {}) as Record<string, string>;
+      // Bots fill the hidden `_hp` field; accept silently (don't tip them off)
+      // but store nothing.
+      const spam = typeof body._hp === 'string' && body._hp.trim() !== '';
+      if (!spam) {
+        const data: Record<string, string> = {};
+        let n = 0;
+        for (const [k, v] of Object.entries(body)) {
+          if (k.startsWith('_')) continue; // control fields (_hp, _redirect, …)
+          if (++n > 50) break; // cap field count
+          data[k] = String(v).slice(0, 5000); // cap field length
+        }
+        await core.createSubmission(req.params.siteId, req.params.formId, data);
+      }
+      reply.header('content-type', 'text/html; charset=utf-8');
+      return reply.status(200).send(thankYouHtml());
+    },
+  );
+
+  app.get(
+    '/sites/:siteId/submissions',
+    { schema: { params: SiteIdParams, querystring: z.object({ formId: z.string().optional() }) } },
+    async (req) => core.listSubmissions(req.params.siteId, req.query.formId),
+  );
 
   app.get('/sites/:siteId/theme', { schema: { params: SiteIdParams } }, async (req) => (await core.getSite(req.params.siteId)).theme);
 

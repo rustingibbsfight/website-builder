@@ -10,6 +10,10 @@ export interface RenderCtx {
   renderNode: (node: WbNode) => string;
   /** True when rendering for the live preview (adds editor hooks). */
   preview?: boolean;
+  /** The site being rendered — used to compose stored-form POST URLs. */
+  siteId?: string;
+  /** Base URL of the wb-api that captures stored form submissions (#27). */
+  formEndpoint?: string;
 }
 
 // biome-ignore lint: any is the ergonomic choice for a heterogeneous registry

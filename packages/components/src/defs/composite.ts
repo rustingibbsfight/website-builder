@@ -258,6 +258,15 @@ const contactFormProps = z
       .optional()
       .describe('Form POST endpoint (e.g. Formspree URL). Static sites need an external handler.'),
     netlifyForms: z.boolean().default(false).describe('Add the data-netlify attribute for Netlify Forms'),
+    store: z
+      .boolean()
+      .default(false)
+      .describe('Capture submissions in wb (posts to the wb-api submissions endpoint; adds a spam honeypot). Requires the site\'s formEndpoint setting.'),
+    formId: z
+      .string()
+      .max(120)
+      .optional()
+      .describe('Groups captured submissions (defaults to the form node id). Used when store is enabled.'),
   })
   .strict();
 
@@ -277,8 +286,9 @@ export const contactForm: ComponentDef<z.infer<typeof contactFormProps>> = {
     ],
     submitLabel: 'Send message',
     netlifyForms: false,
+    store: false,
   },
-  render: (node, props) => {
+  render: (node, props, ctx) => {
     const fields = props.fields
       .map((f) => {
         const id = `f-${node.id}-${f.name}`;
@@ -298,13 +308,24 @@ export const contactForm: ComponentDef<z.infer<typeof contactFormProps>> = {
         return `<div class="wb-field"><label for="${id}">${escapeHtml(f.label)}${f.required ? ' *' : ''}</label>${control}</div>`;
       })
       .join('');
-    const formAttrs = `method="POST"${props.action ? ` action="${safeHref(props.action)}"` : ''}${
+    // Stored submissions: POST to the wb-api endpoint composed from the site's
+    // formEndpoint + id. Adds a hidden honeypot the server checks. Falls back to
+    // the external `action` when store is off or the endpoint isn't configured.
+    let action = props.action ? safeHref(props.action) : '';
+    let honeypot = '';
+    if (props.store && ctx.siteId && ctx.formEndpoint) {
+      const base = ctx.formEndpoint.replace(/\/$/, '');
+      const formId = props.formId || node.id;
+      action = safeHref(`${base}/sites/${ctx.siteId}/submissions/${encodeURIComponent(formId)}`);
+      honeypot = `<input class="wb-hp" type="text" name="_hp" tabindex="-1" autocomplete="off" aria-hidden="true">`;
+    }
+    const formAttrs = `method="POST"${action ? ` action="${action}"` : ''}${
       props.netlifyForms ? ` data-netlify="true" name="contact"` : ''
     }`;
     return el(
       'div',
       node,
-      `${props.heading ? `<h2>${escapeHtml(props.heading)}</h2>` : ''}<form ${formAttrs}>${fields}<button type="submit" class="wb-btn wb-btn-primary wb-btn-md">${escapeHtml(props.submitLabel)}</button></form>`,
+      `${props.heading ? `<h2>${escapeHtml(props.heading)}</h2>` : ''}<form ${formAttrs}>${honeypot}${fields}<button type="submit" class="wb-btn wb-btn-primary wb-btn-md">${escapeHtml(props.submitLabel)}</button></form>`,
     );
   },
   baseCss: `.c-contactForm h2{font-family:var(--font-heading);margin:0 0 var(--space-md)}
@@ -313,7 +334,8 @@ export const contactForm: ComponentDef<z.infer<typeof contactFormProps>> = {
 .wb-field label{font-weight:600;font-size:.95rem}
 .wb-field input,.wb-field textarea,.wb-field select{font:inherit;padding:.6rem .75rem;border:1px solid color-mix(in srgb, var(--color-text) 25%, transparent);border-radius:var(--radius-sm);background:var(--color-background);color:var(--color-text)}
 .wb-field input:focus,.wb-field textarea:focus,.wb-field select:focus{outline:2px solid var(--color-primary);outline-offset:1px;border-color:var(--color-primary)}
-.c-contactForm button{align-self:flex-start;cursor:pointer;border:none}`,
+.c-contactForm button{align-self:flex-start;cursor:pointer;border:none}
+.wb-hp{position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden}`,
 };
 
 const mapEmbedProps = z

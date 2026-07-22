@@ -47,7 +47,7 @@ import { ConflictError, NotFoundError, ValidationError } from './errors.js';
 import { createPublishTarget, type PublishTarget } from './publish-target.js';
 import { createAssetStorage, type AssetStorage } from './storage.js';
 import { createVersionControl, type VersionControl, type VersionControlResult } from './version-control.js';
-import { AssetStore, BuildStore, PageStore, SiteStore, type BuildRecord } from './stores.js';
+import { AssetStore, BuildStore, PageStore, SiteStore, SubmissionStore, type BuildRecord, type SubmissionRecord } from './stores.js';
 
 export interface TemplateInfo {
   name: string;
@@ -103,6 +103,7 @@ export class WbCore {
   private pages: PageStore;
   private assets: AssetStore;
   private builds: BuildStore;
+  private submissions: SubmissionStore;
 
   private constructor(
     private db: Client,
@@ -116,6 +117,7 @@ export class WbCore {
     this.pages = new PageStore(db);
     this.assets = new AssetStore(db);
     this.builds = new BuildStore(db);
+    this.submissions = new SubmissionStore(db);
   }
 
   /** Open the database (local file or remote Turso), run migrations, wire storage. */
@@ -334,9 +336,25 @@ export class WbCore {
     for (const asset of await this.assets.listForSite(siteId)) await this.assets.delete(asset.id);
     for (const page of await this.pages.listForSite(siteId)) await this.pages.delete(page.id);
     await this.builds.deleteForSite(siteId);
+    await this.submissions.deleteForSite(siteId);
     await this.sites.delete(siteId);
     await this.storage.deleteSite(siteId);
     rmSync(distDir(this.dataDir, siteId), { recursive: true, force: true });
+  }
+
+  // ── Form submissions (see #27) ─────────────────────────────────────────────
+  /** Store a captured form submission. Field validation happens at the edge. */
+  async createSubmission(siteId: string, formId: string, data: Record<string, string>): Promise<SubmissionRecord> {
+    await this.getSite(siteId); // 404 if the site is gone
+    const rec: SubmissionRecord = { id: newId(), siteId, formId, data, createdAt: nowIso() };
+    await this.submissions.insert(rec);
+    return rec;
+  }
+
+  /** List captured submissions for a site, newest first (optionally one form). */
+  async listSubmissions(siteId: string, formId?: string): Promise<SubmissionRecord[]> {
+    await this.getSite(siteId);
+    return this.submissions.listForSite(siteId, formId);
   }
 
   async setTheme(siteId: string, patch: Partial<Theme>, merge = true): Promise<Site> {

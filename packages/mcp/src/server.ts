@@ -224,6 +224,23 @@ export function buildMcpServer(deps: McpDeps): McpServer {
   );
 
   server.tool(
+    'list_submissions',
+    'List form submissions captured for a site (newest first). Optionally filter by formId. Each entry has id, formId, the submitted field values, and createdAt. Requires a contactForm with store enabled + the site’s formEndpoint setting.',
+    {
+      siteId: z.string(),
+      formId: z.string().optional().describe('Only submissions for this form (defaults to all forms on the site)'),
+    },
+    async ({ siteId, formId }) => {
+      try {
+        const subs = await core.listSubmissions(siteId, formId);
+        return text(subs.map((s) => ({ id: s.id, formId: s.formId, data: s.data, createdAt: s.createdAt })));
+      } catch (err) {
+        return errText(err);
+      }
+    },
+  );
+
+  server.tool(
     'set_page_meta',
     'Set a page’s SEO & Open Graph metadata (partial merge). Controls the <title>, meta description, canonical, og:*/twitter:* tags, and search-engine indexing. Pass an empty string to clear a field.',
     {

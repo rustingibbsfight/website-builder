@@ -47,6 +47,10 @@ export const SiteSettingsSchema = z
     locale: z.string().default('en'),
     favicon: z.string().optional().describe('Asset id or URL'),
     baseUrl: z.string().optional().describe('Canonical base URL used in sitemap/OG tags'),
+    formEndpoint: z
+      .string()
+      .optional()
+      .describe('Base URL of the wb-api that captures stored form submissions (e.g. https://wb-api-gold.vercel.app)'),
   })
   .strict();
 export type SiteSettings = z.infer<typeof SiteSettingsSchema>;

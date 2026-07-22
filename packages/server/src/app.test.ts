@@ -102,6 +102,54 @@ describe('REST API', () => {
     expect(pub.pageCount).toBe(4);
   });
 
+  it('captures form submissions: public POST, honeypot drop, authed read (#27)', async () => {
+    // A token-protected app: the submission POST must stay public, the read must not.
+    const authed = await buildApp({ core, apiToken: 'secret' });
+    const bearer = { authorization: 'Bearer secret' };
+    try {
+      const site = (
+        await authed.inject({ method: 'POST', url: '/sites', payload: { name: 'Forms' }, headers: bearer })
+      ).json() as { id: string };
+
+      // Public form post — no token, urlencoded body (as a browser sends it).
+      const post = await authed.inject({
+        method: 'POST',
+        url: `/sites/${site.id}/submissions/contact`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        payload: 'name=Ada&email=ada%40example.com&message=Hi&_hp=',
+      });
+      expect(post.statusCode).toBe(200);
+      expect(post.headers['content-type']).toMatch(/text\/html/);
+
+      // Reading requires auth.
+      expect((await authed.inject({ url: `/sites/${site.id}/submissions` })).statusCode).toBe(401);
+
+      const list = (
+        await authed.inject({ url: `/sites/${site.id}/submissions`, headers: bearer })
+      ).json() as Array<{ formId: string; data: Record<string, string> }>;
+      expect(list).toHaveLength(1);
+      expect(list[0]!.formId).toBe('contact');
+      expect(list[0]!.data).toEqual({ name: 'Ada', email: 'ada@example.com', message: 'Hi' });
+      // Control field (leading underscore) is never stored.
+      expect(list[0]!.data._hp).toBeUndefined();
+
+      // A filled honeypot is accepted (200) but not stored.
+      const spam = await authed.inject({
+        method: 'POST',
+        url: `/sites/${site.id}/submissions/contact`,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        payload: 'name=Bot&_hp=iamabot',
+      });
+      expect(spam.statusCode).toBe(200);
+      const after = (
+        await authed.inject({ url: `/sites/${site.id}/submissions`, headers: bearer })
+      ).json() as unknown[];
+      expect(after).toHaveLength(1); // unchanged
+    } finally {
+      await authed.close();
+    }
+  });
+
   it('uploads assets as base64 json', async () => {
     const site = (
       await app.inject({ method: 'POST', url: '/sites', payload: { name: 'Asset API' } })

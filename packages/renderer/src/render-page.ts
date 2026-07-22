@@ -99,6 +99,10 @@ export function renderPage(site: Site, page: Page, opts: RenderPageOptions): str
     theme: site.theme,
     resolveAsset: opts.resolveAsset,
     renderNode: (node) => renderNodeHtml(node, ctx),
+    siteId: site.id,
+    // Where stored-submission forms POST (the wb-api base). Configurable per
+    // site so the static output isn't hard-coded to one API host. (#27)
+    formEndpoint: site.settings.formEndpoint,
   };
 
   let usesVideo = false;
