@@ -111,6 +111,20 @@ describe('REST API', () => {
         await authed.inject({ method: 'POST', url: '/sites', payload: { name: 'Forms' }, headers: bearer })
       ).json() as { id: string };
 
+      // The formEndpoint site setting must persist through PATCH (stored forms
+      // compose their action URL from it).
+      await authed.inject({
+        method: 'PATCH',
+        url: `/sites/${site.id}`,
+        payload: { settings: { formEndpoint: 'https://api.example.com' } },
+        headers: bearer,
+      });
+      const back = (await authed.inject({ url: `/sites/${site.id}`, headers: bearer })).json() as {
+        settings: { formEndpoint?: string; locale?: string };
+      };
+      expect(back.settings.formEndpoint).toBe('https://api.example.com');
+      expect(back.settings.locale).toBe('en'); // merge, not replace
+
       // Public form post — no token, urlencoded body (as a browser sends it).
       const post = await authed.inject({
         method: 'POST',

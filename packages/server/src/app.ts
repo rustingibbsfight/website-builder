@@ -207,7 +207,12 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
           .object({
             name: z.string().min(1).optional(),
             settings: z
-              .object({ locale: z.string().optional(), favicon: z.string().optional(), baseUrl: z.string().optional() })
+              .object({
+                locale: z.string().optional(),
+                favicon: z.string().optional(),
+                baseUrl: z.string().optional(),
+                formEndpoint: z.string().optional(),
+              })
               .optional(),
           })
           .strict(),
