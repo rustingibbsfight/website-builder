@@ -278,4 +278,153 @@ a.wb-gal-tile:hover img{transform:scale(1.04)}
       : '',
 };
 
-export const widgetDefs = [statRow, logoWall, pricingTable, gallery];
+// ── Accordion (native <details>, CSS-only) ───────────────────────────────────
+const accordionProps = z
+  .object({
+    heading: z.string().optional().describe('Optional heading above the accordion'),
+    exclusive: z
+      .boolean()
+      .default(false)
+      .describe('Only one panel open at a time (native, no JavaScript). Otherwise panels open independently.'),
+    items: z
+      .array(
+        z
+          .object({
+            title: z.string().min(1).describe('The clickable row label'),
+            body: z.string().min(1).describe('Panel content (plain text)'),
+            open: z.boolean().default(false).describe('Start expanded'),
+          })
+          .strict(),
+      )
+      .min(1)
+      .describe('Collapsible rows'),
+  })
+  .strict();
+
+export const accordion: ComponentDef<z.infer<typeof accordionProps>> = {
+  type: 'accordion',
+  title: 'Accordion',
+  description: 'Collapsible content rows built on native <details> — zero JavaScript. Optionally single-open (exclusive).',
+  category: 'composite',
+  isContainer: false,
+  layoutTarget: 'inner',
+  propsSchema: accordionProps,
+  defaultProps: {
+    exclusive: false,
+    items: [
+      { title: 'What is included?', body: 'Everything you need to get started, with no hidden extras.', open: true },
+      { title: 'Can I change later?', body: 'Yes — upgrade, downgrade, or cancel at any time.', open: false },
+    ],
+  },
+  render: (node, props) => {
+    // `name` on <details> makes a group mutually exclusive (native HTML, no JS).
+    const groupName = props.exclusive ? ` name="wb-acc-${escapeHtml(node.id)}"` : '';
+    const rows = props.items
+      .map(
+        (it) =>
+          `<details class="wb-acc-item"${it.open ? ' open' : ''}${groupName}><summary class="wb-acc-summary">${escapeHtml(
+            it.title,
+          )}<span class="wb-acc-icon" aria-hidden="true"></span></summary><div class="wb-acc-body"><p>${escapeHtml(
+            it.body,
+          )}</p></div></details>`,
+      )
+      .join('');
+    return el(
+      'section',
+      node,
+      wbInner(
+        `${props.heading ? `<h2 class="wb-acc-head">${escapeHtml(props.heading)}</h2>` : ''}<div class="wb-acc-list">${rows}</div>`,
+      ),
+    );
+  },
+  baseCss: `.c-accordion .wb-inner{max-width:820px;margin:0 auto;padding:var(--space-xl) var(--space-md)}
+.wb-acc-head{font-family:var(--font-heading);font-size:clamp(1.6rem,3.5vw,2.3rem);text-align:center;margin:0 0 var(--space-lg)}
+.wb-acc-list{display:flex;flex-direction:column;gap:.6rem}
+.wb-acc-item{border:1px solid color-mix(in srgb, var(--color-text) 12%, transparent);border-radius:var(--radius-md);background:var(--color-background);overflow:hidden}
+.wb-acc-summary{list-style:none;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:var(--space-md) var(--space-lg);font-family:var(--font-heading);font-size:1.05rem;font-weight:600}
+.wb-acc-summary::-webkit-details-marker{display:none}
+.wb-acc-icon{flex:none;width:.7rem;height:.7rem;border-right:2px solid var(--color-primary);border-bottom:2px solid var(--color-primary);transform:rotate(45deg);transition:transform .18s ease}
+.wb-acc-item[open] .wb-acc-icon{transform:rotate(-135deg)}
+.wb-acc-body{padding:0 var(--space-lg) var(--space-md)}
+.wb-acc-body p{margin:0;color:var(--color-textMuted);line-height:1.6}`,
+};
+
+// ── Tabs (CSS-only radio-hack) ───────────────────────────────────────────────
+const tabsProps = z
+  .object({
+    heading: z.string().optional().describe('Optional heading above the tabs'),
+    tabs: z
+      .array(
+        z
+          .object({
+            label: z.string().min(1).describe('Tab label'),
+            body: z.string().min(1).describe('Panel content (plain text)'),
+          })
+          .strict(),
+      )
+      .min(2)
+      .max(6)
+      .describe('Tabs, shown side by side'),
+  })
+  .strict();
+
+export const tabs: ComponentDef<z.infer<typeof tabsProps>> = {
+  type: 'tabs',
+  title: 'Tabs',
+  description: 'Tabbed panels with a CSS-only radio switch — zero JavaScript. The first tab is selected by default.',
+  category: 'composite',
+  isContainer: false,
+  layoutTarget: 'inner',
+  propsSchema: tabsProps,
+  defaultProps: {
+    tabs: [
+      { label: 'Overview', body: 'A quick summary of what this does and why it matters.' },
+      { label: 'Details', body: 'The specifics — how it works and what to expect.' },
+    ],
+  },
+  render: (node, props) => {
+    // Radio inputs (one group per node) drive which panel shows via :checked —
+    // no JavaScript. Radios, the tab list, and the panels are siblings so the
+    // per-node CSS can map "Nth radio checked" → "Nth label active / Nth panel".
+    const name = `wb-tabs-${escapeHtml(node.id)}`;
+    const radios = props.tabs
+      .map((_t, i) => `<input class="wb-tab-radio" type="radio" name="${name}" id="${name}-${i}"${i === 0 ? ' checked' : ''}>`)
+      .join('');
+    const labels = props.tabs
+      .map((t, i) => `<label class="wb-tab" for="${name}-${i}">${escapeHtml(t.label)}</label>`)
+      .join('');
+    const panels = props.tabs
+      .map((t) => `<div class="wb-tabpanel"><p>${escapeHtml(t.body)}</p></div>`)
+      .join('');
+    return el(
+      'section',
+      node,
+      wbInner(
+        `${props.heading ? `<h2 class="wb-tabs-head">${escapeHtml(props.heading)}</h2>` : ''}<div class="wb-tabs">${radios}<div class="wb-tablist" role="tablist">${labels}</div><div class="wb-tabpanels">${panels}</div></div>`,
+      ),
+    );
+  },
+  baseCss: `.c-tabs .wb-inner{max-width:900px;margin:0 auto;padding:var(--space-xl) var(--space-md)}
+.wb-tabs-head{font-family:var(--font-heading);font-size:clamp(1.6rem,3.5vw,2.3rem);text-align:center;margin:0 0 var(--space-lg)}
+.wb-tabs{position:relative}
+.wb-tab-radio{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+.wb-tablist{display:flex;flex-wrap:wrap;gap:.25rem;border-bottom:2px solid color-mix(in srgb, var(--color-text) 12%, transparent);margin-bottom:var(--space-lg)}
+.wb-tab{cursor:pointer;padding:.6rem 1rem;font-family:var(--font-heading);font-weight:600;color:var(--color-textMuted);border-bottom:2px solid transparent;margin-bottom:-2px;transition:color .15s ease,border-color .15s ease}
+.wb-tab:hover{color:var(--color-text)}
+.wb-tab-radio:focus-visible + .wb-tablist .wb-tab{outline:2px solid var(--color-primary);outline-offset:2px}
+.wb-tabpanel{display:none;line-height:1.6}
+.wb-tabpanel p{margin:0;color:var(--color-textMuted)}`,
+  // Map the Nth checked radio to the Nth label's active state and Nth panel.
+  nodeCss: (node, props, sel) => {
+    const name = `wb-tabs-${node.id}`;
+    return props.tabs
+      .map(
+        (_t, i) =>
+          `${sel} #${name}-${i}:checked ~ .wb-tablist .wb-tab:nth-of-type(${i + 1}){color:var(--color-primary);border-bottom-color:var(--color-primary)}` +
+          `${sel} #${name}-${i}:checked ~ .wb-tabpanels .wb-tabpanel:nth-of-type(${i + 1}){display:block}`,
+      )
+      .join('\n');
+  },
+};
+
+export const widgetDefs = [statRow, logoWall, pricingTable, gallery, accordion, tabs];

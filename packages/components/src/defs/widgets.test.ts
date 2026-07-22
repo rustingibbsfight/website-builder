@@ -64,6 +64,58 @@ describe('widget components', () => {
     expect(noLb).toContain('<figure');
   });
 
+  it('accordion renders a <details> per item and honours open/exclusive', () => {
+    const html = render('accordion', {
+      exclusive: true,
+      items: [
+        { title: 'First', body: 'One', open: true },
+        { title: 'Second', body: 'Two', open: false },
+      ],
+    });
+    // Two collapsible rows, first starts open.
+    expect(html.match(/<details/g)?.length).toBe(2);
+    expect(html).toContain('<details class="wb-acc-item" open');
+    // Exclusive → native single-open grouping via matching name= on each <details>.
+    expect(html.match(/name="wb-acc-w123456789"/g)?.length).toBe(2);
+    expect(html).toContain('First');
+    expect(html).toContain('Two');
+  });
+
+  it('accordion exclusive=false omits the grouping name', () => {
+    const html = render('accordion', { exclusive: false, items: [{ title: 'A', body: 'a' }] });
+    expect(html).not.toContain('name="wb-acc');
+  });
+
+  it('tabs emits one radio per tab, first checked, mapped to labels + panels', () => {
+    const html = render('tabs', {
+      tabs: [
+        { label: 'Overview', body: 'Summary' },
+        { label: 'Details', body: 'Specifics' },
+      ],
+    });
+    const radios = html.match(/type="radio"/g)?.length;
+    expect(radios).toBe(2);
+    // Exactly one selected by default (the first).
+    expect(html.match(/\schecked/g)?.length).toBe(1);
+    expect(html).toContain('id="wb-tabs-w123456789-0"');
+    expect(html).toContain('for="wb-tabs-w123456789-1"');
+    expect(html).toContain('Overview');
+    expect(html).toContain('Specifics');
+    // Per-node CSS maps checked radio → active label + shown panel (no JS).
+    const css = getComponent('tabs').nodeCss?.(
+      { id: 'w123456789', type: 'tabs', props: {}, children: [] } as unknown as WbNode,
+      parseProps('tabs', {
+        tabs: [
+          { label: 'Overview', body: 'Summary' },
+          { label: 'Details', body: 'Specifics' },
+        ],
+      }),
+      '.c-tabs',
+    );
+    expect(css).toContain('#wb-tabs-w123456789-0:checked');
+    expect(css).toContain('.wb-tabpanel:nth-of-type(2){display:block}');
+  });
+
   it('escapes user text — no HTML injection through widget props', () => {
     const html = render('statRow', { stats: [{ value: '<script>x</script>', label: '"><img>' }] });
     expect(html).not.toContain('<script>x');
@@ -72,7 +124,7 @@ describe('widget components', () => {
   });
 
   it('ships zero JavaScript — no <script> or on* handlers in output', () => {
-    for (const type of ['statRow', 'logoWall', 'pricingTable', 'gallery']) {
+    for (const type of ['statRow', 'logoWall', 'pricingTable', 'gallery', 'accordion', 'tabs']) {
       const def = getComponent(type);
       const html = render(type, def.defaultProps as Record<string, unknown>);
       expect(html, type).not.toMatch(/<script/i);
