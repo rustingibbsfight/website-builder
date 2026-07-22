@@ -1,6 +1,19 @@
 import { z } from 'zod';
 import { ColorTokenSchema, RadiusTokenSchema, ShadowTokenSchema, SpacingTokenSchema } from './tokens.js';
 
+/**
+ * A node id. Ids are interpolated into HTML class/attribute values and CSS
+ * selectors, so they MUST be restricted to injection-safe characters — this is
+ * the primary defense against id-based HTML/CSS injection (a client-supplied id
+ * like `x"><script>…` would otherwise break out). Generated ids are [0-9a-z];
+ * `-`/`_` are allowed for hand-authored ids.
+ */
+export const NodeIdSchema = z
+  .string()
+  .min(1)
+  .max(64)
+  .regex(/^[A-Za-z0-9_-]+$/, 'node id must contain only letters, digits, hyphens, or underscores');
+
 export const AssetRefSchema = z.object({
   assetId: z.string().optional().describe('Id of an uploaded asset'),
   url: z.string().optional().describe('External or absolute URL (used when no assetId)'),
@@ -134,7 +147,10 @@ export interface WbNode {
 export const NodeSchema: z.ZodType<WbNode> = z.lazy(() =>
   z
     .object({
-      id: z.string().min(1).describe('Unique node id within the page'),
+      // Ids are interpolated into HTML class/attributes and CSS selectors, so
+      // they must be injection-safe. Generated ids are [0-9a-z]; allow -/_ for
+      // hand-authored ids. This is the primary defense against id-based XSS.
+      id: NodeIdSchema.describe('Unique node id within the page'),
       type: z.string().min(1).describe('Registered component type'),
       props: z.record(z.unknown()).default({}),
       layout: LayoutSchema.optional(),
@@ -159,7 +175,7 @@ export interface NodeInput {
 export const NodeInputSchema: z.ZodType<NodeInput> = z.lazy(() =>
   z
     .object({
-      id: z.string().min(1).optional(),
+      id: NodeIdSchema.optional(),
       type: z.string().min(1),
       props: z.record(z.unknown()).optional(),
       layout: LayoutSchema.optional(),
