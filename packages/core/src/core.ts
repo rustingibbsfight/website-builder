@@ -49,6 +49,10 @@ import { createAssetStorage, type AssetStorage } from './storage.js';
 import { createVersionControl, type VersionControl, type VersionControlResult } from './version-control.js';
 import { AssetStore, BuildStore, PageStore, SiteStore, SubmissionStore, type BuildRecord, type SubmissionRecord } from './stores.js';
 
+/** Per-site cap on captured form submissions — the endpoint is public, so this
+ *  bounds storage abuse. Generous for a real form, far below flood volume. */
+const MAX_SUBMISSIONS_PER_SITE = 10_000;
+
 /** Symbol ids referenced (directly) by a subtree's symbolInstance nodes. */
 function collectSymbolRefs(node: WbNode, out: Set<string>): void {
   if (node.type === 'symbolInstance') {
@@ -380,6 +384,11 @@ export class WbCore {
   /** Store a captured form submission. Field validation happens at the edge. */
   async createSubmission(siteId: string, formId: string, data: Record<string, string>): Promise<SubmissionRecord> {
     await this.getSite(siteId); // 404 if the site is gone
+    // Per-site cap so the public, unauthenticated endpoint can't be used to
+    // exhaust storage. Generous for a real form; well below abuse volume.
+    if ((await this.submissions.countForSite(siteId)) >= MAX_SUBMISSIONS_PER_SITE) {
+      throw new ValidationError('submission limit reached for this site');
+    }
     const rec: SubmissionRecord = { id: newId(), siteId, formId, data, createdAt: nowIso() };
     await this.submissions.insert(rec);
     return rec;

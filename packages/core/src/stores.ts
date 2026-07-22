@@ -330,6 +330,11 @@ export class SubmissionStore {
     }));
   }
 
+  async countForSite(siteId: string): Promise<number> {
+    const rows = (await this.db.execute({ sql: 'SELECT COUNT(*) AS n FROM submissions WHERE site_id=?', args: [siteId] })).rows;
+    return Number(rows[0]?.n ?? 0);
+  }
+
   async deleteForSite(siteId: string): Promise<void> {
     await this.db.execute({ sql: 'DELETE FROM submissions WHERE site_id=?', args: [siteId] });
   }
