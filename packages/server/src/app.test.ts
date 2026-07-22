@@ -36,7 +36,7 @@ describe('REST API', () => {
 
   it('lists components with schemas', async () => {
     const list = (await app.inject({ url: '/components' })).json() as Array<{ type: string }>;
-    expect(list.length).toBe(27);
+    expect(list.length).toBe(29);
     const hero = (await app.inject({ url: '/components/hero' })).json() as {
       propsSchema: { properties: Record<string, unknown> };
       defaultProps: Record<string, unknown>;
