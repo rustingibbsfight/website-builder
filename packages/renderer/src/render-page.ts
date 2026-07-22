@@ -27,9 +27,37 @@ export function pageBodyClass(slug: string): string {
 }
 
 export function renderNodeHtml(node: WbNode, ctx: RenderCtx): string {
+  if (node.type === 'symbolInstance') return renderSymbolInstance(node, ctx);
   const def = getComponent(node.type);
   const props = parseProps(node.type, node.props);
   return def.render(node, props, ctx);
+}
+
+/**
+ * Resolve a symbol instance to its definition subtree (#26). Publish inlines the
+ * resolved HTML; the editor preview wraps it as one selectable unit (inner
+ * data-node-ids stripped) so you edit the definition, not the instance. Missing
+ * symbols and cycles degrade to nothing (publish) or a placeholder (preview).
+ */
+function renderSymbolInstance(node: WbNode, ctx: RenderCtx): string {
+  const symId = String((node.props as { symbolId?: unknown })?.symbolId ?? '');
+  const def = symId ? ctx.symbols?.[symId] : undefined;
+  const stack = ctx.symbolStack ?? [];
+  if (!def || stack.includes(symId)) {
+    if (!ctx.preview) return '';
+    const label = !def ? 'Missing symbol' : 'Symbol cycle';
+    return `<div class="c-symbolInstance n-${node.id}" data-node-id="${node.id}"><div class="wb-sym-missing">${label}${
+      symId ? `: ${escapeHtml(symId)}` : ''
+    }</div></div>`;
+  }
+  const innerCtx: RenderCtx = { ...ctx, symbolStack: [...stack, symId] };
+  innerCtx.renderNode = (n) => renderNodeHtml(n, innerCtx);
+  let inner = renderNodeHtml(def, innerCtx);
+  if (ctx.preview) {
+    inner = inner.replace(/ data-node-id="[^"]*"/g, '');
+    return `<div class="c-symbolInstance n-${node.id}" data-node-id="${node.id}" data-symbol="${escapeHtml(symId)}">${inner}</div>`;
+  }
+  return inner;
 }
 
 function headHtml(site: Site, page: Page, resolveAsset: RenderCtx['resolveAsset']): string {
@@ -103,6 +131,7 @@ export function renderPage(site: Site, page: Page, opts: RenderPageOptions): str
     // Where stored-submission forms POST (the wb-api base). Configurable per
     // site so the static output isn't hard-coded to one API host. (#27)
     formEndpoint: site.settings.formEndpoint,
+    symbols: site.symbols,
   };
 
   let usesVideo = false;

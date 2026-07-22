@@ -11,7 +11,6 @@ import {
   isThemeColorToken,
   radiusPx,
   spacingPx,
-  walk,
   type Layout,
   type Padding,
   type Site,
@@ -200,15 +199,25 @@ export function renderCss(site: Site, trees: CssTree[], resolveAsset: RenderCtx[
   const tablet: string[] = [];
   const mobile: string[] = [];
 
-  for (const { root, scope } of trees) {
-    walk(root, (node) => {
-      usedTypes.add(node.type);
-      const css = cssForNode(node, scope, resolveAsset);
-      base.push(...css.base);
-      tablet.push(...css.tablet);
-      mobile.push(...css.mobile);
-    });
-  }
+  // Symbol-aware walk: a symbolInstance contributes the CSS of its resolved
+  // definition subtree (its own node ids, matching the inlined HTML). (#26)
+  const symbols = site.symbols ?? {};
+  const visit = (node: WbNode, scope: string, stack: string[]): void => {
+    if (node.type === 'symbolInstance') {
+      usedTypes.add('symbolInstance');
+      const symId = String((node.props as { symbolId?: unknown })?.symbolId ?? '');
+      const def = symId ? symbols[symId] : undefined;
+      if (def && !stack.includes(symId)) visit(def, scope, [...stack, symId]);
+      return;
+    }
+    usedTypes.add(node.type);
+    const css = cssForNode(node, scope, resolveAsset);
+    base.push(...css.base);
+    tablet.push(...css.tablet);
+    mobile.push(...css.mobile);
+    for (const child of node.children ?? []) visit(child, scope, stack);
+  };
+  for (const { root, scope } of trees) visit(root, scope, []);
 
   const componentCss = [...usedTypes]
     .sort()

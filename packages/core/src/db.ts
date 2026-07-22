@@ -25,6 +25,7 @@ const MIGRATIONS: string[][] = [
       theme_json TEXT NOT NULL,
       header_json TEXT,
       footer_json TEXT,
+      symbols_json TEXT,
       settings_json TEXT NOT NULL DEFAULT '{}',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
@@ -129,6 +130,7 @@ export async function openDb(opts: DbOptions): Promise<Client> {
   // the loop above is a no-op) that predate a column — e.g. pages.version, which
   // fresh CREATE TABLEs above already include.
   await ensureColumn(client, 'pages', 'version', 'INTEGER NOT NULL DEFAULT 0');
+  await ensureColumn(client, 'sites', 'symbols_json', 'TEXT'); // reusable symbols (#26)
   return client;
 }
 

@@ -8,6 +8,7 @@ export interface SiteFieldUpdate {
   settings?: SiteSettings;
   header?: WbNode | null;
   footer?: WbNode | null;
+  symbols?: Record<string, WbNode> | null;
 }
 
 const str = (v: unknown): string => String(v);
@@ -19,6 +20,7 @@ const siteFromRow = (r: Row): Site => ({
   theme: JSON.parse(str(r.theme_json)) as Theme,
   ...(r.header_json ? { header: JSON.parse(str(r.header_json)) as WbNode } : {}),
   ...(r.footer_json ? { footer: JSON.parse(str(r.footer_json)) as WbNode } : {}),
+  ...(r.symbols_json ? { symbols: JSON.parse(str(r.symbols_json)) as Record<string, WbNode> } : {}),
   settings: JSON.parse(str(r.settings_json)) as SiteSettings,
   createdAt: str(r.created_at),
   updatedAt: str(r.updated_at),
@@ -50,14 +52,15 @@ export class SiteStore {
 
   insertStatement(site: Site): InStatement {
     return {
-      sql: `INSERT INTO sites (id, name, theme_json, header_json, footer_json, settings_json, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      sql: `INSERT INTO sites (id, name, theme_json, header_json, footer_json, symbols_json, settings_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       args: [
         site.id,
         site.name,
         JSON.stringify(site.theme),
         site.header ? JSON.stringify(site.header) : null,
         site.footer ? JSON.stringify(site.footer) : null,
+        site.symbols ? JSON.stringify(site.symbols) : null,
         JSON.stringify(site.settings),
         site.createdAt,
         site.updatedAt,
@@ -103,6 +106,10 @@ export class SiteStore {
     if ('footer' in fields) {
       cols.push('footer_json=?');
       args.push(fields.footer ? JSON.stringify(fields.footer) : null);
+    }
+    if ('symbols' in fields) {
+      cols.push('symbols_json=?');
+      args.push(fields.symbols ? JSON.stringify(fields.symbols) : null);
     }
     cols.push('updated_at=?');
     args.push(updatedAt);

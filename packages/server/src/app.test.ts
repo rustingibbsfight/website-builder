@@ -36,7 +36,7 @@ describe('REST API', () => {
 
   it('lists components with schemas', async () => {
     const list = (await app.inject({ url: '/components' })).json() as Array<{ type: string }>;
-    expect(list.length).toBe(29);
+    expect(list.length).toBe(30);
     const hero = (await app.inject({ url: '/components/hero' })).json() as {
       propsSchema: { properties: Record<string, unknown> };
       defaultProps: Record<string, unknown>;
@@ -162,6 +162,59 @@ describe('REST API', () => {
     } finally {
       await authed.close();
     }
+  });
+
+  it('reusable symbols: define, instance ×2, resolve, edit-once, reject cycle (#26)', async () => {
+    const created = (
+      await app.inject({ method: 'POST', url: '/sites/from-template', payload: { template: 'portfolio' } })
+    ).json() as { site: { id: string } };
+    const siteId = created.site.id;
+
+    // Define a symbol (a heading subtree).
+    const put = await app.inject({
+      method: 'PUT',
+      url: `/sites/${siteId}/symbols/cta`,
+      payload: { type: 'heading', props: { text: 'Book now', level: 2 } },
+    });
+    expect(put.statusCode).toBe(200);
+    const list = (await app.inject({ url: `/sites/${siteId}/symbols` })).json() as Array<{ id: string; rootType: string }>;
+    expect(list).toEqual([{ id: 'cta', rootType: 'heading' }]);
+
+    // Place two instances on the home page.
+    const pages = (await app.inject({ url: `/sites/${siteId}/pages` })).json() as Array<{ id: string; slug: string; rootId: string }>;
+    const home = pages.find((p) => p.slug === '')!;
+    await app.inject({
+      method: 'POST',
+      url: `/sites/${siteId}/pages/${home.id}/tree/ops`,
+      payload: {
+        ops: [
+          { op: 'insert', parentId: home.rootId, node: { type: 'symbolInstance', props: { symbolId: 'cta' } } },
+          { op: 'insert', parentId: home.rootId, node: { type: 'symbolInstance', props: { symbolId: 'cta' } } },
+        ],
+      },
+    });
+
+    // Both instances resolve to the shared definition.
+    const html = (await app.inject({ url: `/preview/${siteId}/` })).body;
+    expect(html.match(/Book now/g)?.length).toBe(2);
+
+    // Edit the definition once → every instance updates.
+    await app.inject({
+      method: 'PUT',
+      url: `/sites/${siteId}/symbols/cta`,
+      payload: { type: 'heading', props: { text: 'Reserve', level: 2 } },
+    });
+    const html2 = (await app.inject({ url: `/preview/${siteId}/` })).body;
+    expect(html2.match(/Reserve/g)?.length).toBe(2);
+    expect(html2).not.toContain('Book now');
+
+    // A symbol that references itself is rejected (cycle).
+    const cyc = await app.inject({
+      method: 'PUT',
+      url: `/sites/${siteId}/symbols/loop`,
+      payload: { type: 'symbolInstance', props: { symbolId: 'loop' } },
+    });
+    expect(cyc.statusCode).toBe(422);
   });
 
   it('uploads assets as base64 json', async () => {

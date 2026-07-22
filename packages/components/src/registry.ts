@@ -14,6 +14,10 @@ export interface RenderCtx {
   siteId?: string;
   /** Base URL of the wb-api that captures stored form submissions (#27). */
   formEndpoint?: string;
+  /** Reusable symbol definitions (id → subtree), resolved for symbolInstance (#26). */
+  symbols?: Record<string, WbNode>;
+  /** Symbol ids currently being expanded — guards against cycles (#26). */
+  symbolStack?: string[];
 }
 
 // biome-ignore lint: any is the ergonomic choice for a heterogeneous registry
