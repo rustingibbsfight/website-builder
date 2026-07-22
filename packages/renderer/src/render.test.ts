@@ -70,6 +70,9 @@ describe('renderSite', () => {
     expect([...files.keys()].sort()).toEqual([
       '404.html',
       'index.html',
+      // Auto-generated branded OG fallback cards (one per page, no explicit image).
+      'og/index.svg',
+      'og/services.svg',
       'robots.txt',
       'services/index.html',
       'sitemap.xml',

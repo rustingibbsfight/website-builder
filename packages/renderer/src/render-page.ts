@@ -6,6 +6,7 @@ import {
   type RenderCtx,
 } from '@wb/components';
 import { normalizeSlug, walk, type Page, type Site, type WbNode } from '@wb/schema';
+import { ogFallbackPath } from './og-image.js';
 
 export interface RenderPageOptions {
   resolveAsset: RenderCtx['resolveAsset'];
@@ -54,11 +55,15 @@ function headHtml(site: Site, page: Page, resolveAsset: RenderCtx['resolveAsset'
   const base = site.settings.baseUrl?.replace(/\/$/, '');
   const path = slug === '' ? '/' : `/${slug}/`;
   // Resolve the OG image to an absolute URL where possible (crawlers need it).
+  // With no explicit image, fall back to the auto-generated branded card that
+  // renderSite writes at og/<slug>.svg (kept in lockstep with that condition).
   let ogImage = '';
   if (page.meta.ogImage) {
     ogImage = page.meta.ogImage.startsWith('http')
       ? page.meta.ogImage
       : (base ?? '') + resolveAsset({ assetId: page.meta.ogImage });
+  } else {
+    ogImage = `${base ?? ''}/${ogFallbackPath(page)}`;
   }
 
   lines.push(`<meta property="og:title" content="${escapeHtml(ogTitle)}">`);
