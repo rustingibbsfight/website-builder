@@ -271,6 +271,10 @@ describe('REST API', () => {
       },
     });
     expect(res.statusCode).toBe(201);
+    // The response body must be the created asset (awaited), not `{}` — and on
+    // serverless the await also guarantees the storage write completed.
+    expect((res.json() as { id?: string; filename?: string }).id).toBeTruthy();
+    expect((res.json() as { filename?: string }).filename).toBe('dot.svg');
     const assets = (await app.inject({ url: `/sites/${site.id}/assets` })).json() as unknown[];
     expect(assets).toHaveLength(1);
   });

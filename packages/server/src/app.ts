@@ -403,7 +403,10 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
       const file = await req.file();
       if (!file) throw new ValidationError('no file in multipart body');
       const buf = await file.toBuffer();
-      return reply.status(201).send(core.addAsset(siteId, file.filename, file.mimetype, buf));
+      // Await the write: otherwise the response serializes the Promise as `{}`
+      // (no assetId) and, on serverless, the function can freeze before the
+      // async storage put completes — losing the asset.
+      return reply.status(201).send(await core.addAsset(siteId, file.filename, file.mimetype, buf));
     }
     const body = z
       .object({ filename: z.string().min(1), mime: z.string().min(1), base64: z.string().min(1) })
@@ -411,7 +414,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
       .parse(req.body);
     return reply
       .status(201)
-      .send(core.addAsset(siteId, body.filename, body.mime, Buffer.from(body.base64, 'base64')));
+      .send(await core.addAsset(siteId, body.filename, body.mime, Buffer.from(body.base64, 'base64')));
   });
 
   app.get('/sites/:siteId/assets', { schema: { params: SiteIdParams } }, async (req) =>
