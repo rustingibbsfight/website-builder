@@ -105,6 +105,9 @@ function applyOne(root: WbNode, op: TreeOp, ids: Set<string>, hooks: ApplyOpsHoo
       parent.children ??= [];
       const index = op.index === undefined ? parent.children.length : Math.min(op.index, parent.children.length);
       parent.children.splice(index, 0, node);
+      // Enforce the destination's allowedChildren so the ops path can't persist a
+      // tree that setTree/validateTree would reject.
+      hooks.validateNode?.(parent);
       return;
     }
     case 'update': {
@@ -143,6 +146,7 @@ function applyOne(root: WbNode, op: TreeOp, ids: Set<string>, hooks: ApplyOpsHoo
       // compute a drop slot with the moving node still present must convert to a
       // final index before calling (the editor's drag handlers do this).
       target.children.splice(Math.min(op.index, target.children.length), 0, moving);
+      hooks.validateNode?.(target); // enforce the destination's allowedChildren
       return;
     }
     case 'remove': {
@@ -157,6 +161,7 @@ function applyOne(root: WbNode, op: TreeOp, ids: Set<string>, hooks: ApplyOpsHoo
       const node = materializeNode(op.node, ids);
       validateSubtree(node, hooks);
       found.parent.children!.splice(found.index, 1, node);
+      hooks.validateNode?.(found.parent); // enforce the destination's allowedChildren
       return;
     }
   }
