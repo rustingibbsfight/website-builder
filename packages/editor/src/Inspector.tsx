@@ -82,6 +82,18 @@ export function Inspector({
     onOps([{ op: 'update', nodeId: node.id, style: { [key]: value === '' ? null : value } }]);
   };
 
+  // Hover/focus are nested style objects; mergeClean replaces the whole object,
+  // so send the full state each edit (and clear it entirely when it empties).
+  const setState = (state: 'hover' | 'focus', key: string, value: unknown) => {
+    const current = { ...((style[state] as Record<string, unknown>) ?? {}) };
+    if (value === '' || value === undefined) delete current[key];
+    else current[key] = value;
+    onOps([
+      { op: 'update', nodeId: node.id, style: { [state]: Object.keys(current).length ? current : null } },
+    ]);
+  };
+  const hover = (style.hover as Record<string, unknown>) ?? {};
+
   const setHidden = (bp: 'tablet' | 'mobile', hidden: boolean) => {
     const next = {
       ...responsive,
@@ -223,6 +235,26 @@ export function Inspector({
             value={(style.minHeight as string) ?? ''}
             options={['', 'auto', 'half', 'screen']}
             onChange={(v) => setStyle('minHeight', v)}
+          />
+          <div className="style-state-head">Hover state</div>
+          <Select
+            label="hover background"
+            testId="style-hover-background"
+            value={(hover.background as string) ?? ''}
+            options={COLOR_TOKENS}
+            onChange={(v) => setState('hover', 'background', v)}
+          />
+          <Select
+            label="hover text"
+            value={(hover.color as string) ?? ''}
+            options={COLOR_TOKENS}
+            onChange={(v) => setState('hover', 'color', v)}
+          />
+          <Select
+            label="hover shadow"
+            value={(hover.shadow as string) ?? ''}
+            options={['', 'none', 'sm', 'md', 'lg']}
+            onChange={(v) => setState('hover', 'shadow', v)}
           />
         </div>
       )}
