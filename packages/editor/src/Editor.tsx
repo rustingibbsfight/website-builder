@@ -103,6 +103,8 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
         containerId?: string | null;
         index?: number;
         text?: string;
+        key?: string;
+        value?: string;
       };
       if (d.type === 'wb:clicked' && d.nodeId) setSelectedId(d.nodeId);
       if (d.type === 'wb:ready') {
@@ -127,6 +129,10 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
         const slot = d.index ?? 0;
         const finalIndex = cur && cur.parent.id === d.containerId && cur.index < slot ? slot - 1 : slot;
         mutateRef.current([{ op: 'move', nodeId: d.nodeId, parentId: d.containerId, index: finalIndex }]);
+      }
+      // On-canvas spacing handle: apply the dragged layout token as one op.
+      if (d.type === 'wb:set-layout' && d.nodeId && d.key) {
+        mutateRef.current([{ op: 'update', nodeId: d.nodeId, layout: { [d.key]: d.value ?? null } }]);
       }
       if (d.type === 'wb:drop-target') {
         dropTarget.current = d.containerId ? { containerId: d.containerId, index: d.index ?? 0 } : null;

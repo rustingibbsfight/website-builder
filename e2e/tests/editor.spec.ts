@@ -171,6 +171,62 @@ test.describe('visual editor', () => {
     await page.getByRole('button', { name: /undo/ }).click();
   });
 
+  test('on-canvas padding handle drags to change a container’s padding token', async ({ page }) => {
+    const api = page.request;
+    const sites = (await (await api.get(`${BASE}/sites`)).json()) as Array<{ id: string }>;
+    const siteId = sites[0]!.id;
+    const pages = (await (await api.get(`${BASE}/sites/${siteId}/pages`)).json()) as Array<{ id: string }>;
+    const pageId = pages[0]!.id;
+    const full = (await (await api.get(`${BASE}/sites/${siteId}/pages/${pageId}`)).json()) as { tree: { id: string } };
+    await api.post(`${BASE}/sites/${siteId}/pages/${pageId}/tree/ops`, {
+      data: {
+        ops: [
+          {
+            op: 'insert',
+            parentId: full.tree.id,
+            node: {
+              type: 'section',
+              props: {},
+              layout: { direction: 'stack', gap: 'md' },
+              children: [{ type: 'heading', props: { text: 'PadMe', level: 2 } }],
+            },
+          },
+        ],
+      },
+    });
+    // The section is the last child of the root.
+    const treeNow = (await (await api.get(`${BASE}/sites/${siteId}/pages/${pageId}`)).json()) as {
+      tree: { children: Array<{ id: string; type: string }> };
+    };
+    const sectionId = treeNow.tree.children.filter((c) => c.type === 'section').at(-1)!.id;
+
+    await openEditor(page);
+    // Select the section via the outline (clicking the heading would select it, not the section).
+    await page.locator('.outline-row', { hasText: 'section' }).last().click();
+
+    const frame = page.frameLocator('[data-testid="canvas-frame"]');
+    const grip = frame.locator('#wb-ed-pad-grip');
+    await grip.waitFor({ state: 'visible' });
+    const box = (await grip.boundingBox())!;
+    // Drag the grip down to increase the padding token. hover() first so
+    // Playwright resolves the grip's hit point (accounting for the iframe).
+    await grip.hover();
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 70, { steps: 8 });
+    await expect(frame.locator('#wb-ed-pad-label')).toBeVisible(); // drag started
+    await page.mouse.up();
+
+    // The section now has a non-"none" padding token.
+    await expect
+      .poll(async () => {
+        const node = ((await (await api.get(`${BASE}/sites/${siteId}/pages/${pageId}`)).json()) as {
+          tree: { children: Array<{ id: string; layout?: { padding?: string } }> };
+        }).tree.children.find((c) => c.id === sectionId);
+        return node?.layout?.padding ?? null;
+      })
+      .toMatch(/^(xs|sm|md|lg|xl|2xl)$/);
+  });
+
   test('submissions dialog lists captured form submissions', async ({ page }) => {
     const api = page.request;
     const sites = (await (await api.get(`${BASE}/sites`)).json()) as Array<{ id: string }>;
