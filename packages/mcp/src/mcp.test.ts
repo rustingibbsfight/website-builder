@@ -36,7 +36,7 @@ const textOf = (result: unknown): string => {
 };
 
 describe('MCP server', () => {
-  it('exposes the 12 tools', async () => {
+  it('exposes the 14 tools', async () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
       'add_asset',
@@ -45,6 +45,8 @@ describe('MCP server', () => {
       'edit_page',
       'get_page',
       'get_site',
+      'insert_block',
+      'list_blocks',
       'list_components',
       'list_templates',
       'preview_site',
@@ -52,6 +54,32 @@ describe('MCP server', () => {
       'set_page_meta',
       'set_theme',
     ]);
+  });
+
+  it('list_blocks + insert_block drops a section into a page', async () => {
+    const created = await client.callTool({
+      name: 'create_site',
+      arguments: { name: 'Blocks Clinic', template: 'breakthrough-medical' },
+    });
+    const { siteId, pages } = JSON.parse(textOf(created)) as {
+      siteId: string;
+      pages: Array<{ id: string; slug: string; rootId: string }>;
+    };
+    const home = pages.find((p) => p.slug === '' || p.slug === 'index') ?? pages[0]!;
+
+    const blocks = JSON.parse(textOf(await client.callTool({ name: 'list_blocks', arguments: {} }))) as Array<{
+      id: string;
+    }>;
+    expect(blocks.length).toBeGreaterThan(0);
+
+    const before = (await core.getPage(siteId, home.id)).tree.children?.length ?? 0;
+    const res = await client.callTool({
+      name: 'insert_block',
+      arguments: { siteId, pageId: home.id, blockId: 'faq', parentId: home.rootId },
+    });
+    expect(textOf(res)).toContain('"inserted": "faq"');
+    const after = (await core.getPage(siteId, home.id)).tree.children?.length ?? 0;
+    expect(after).toBe(before + 1);
   });
 
   it('set_page_meta updates SEO/OG metadata programmatically', async () => {

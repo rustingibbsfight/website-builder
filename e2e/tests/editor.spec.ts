@@ -57,6 +57,18 @@ test.describe('visual editor', () => {
     await expect(outlineRows()).toHaveCount(before);
   });
 
+  test('blocks panel inserts a pre-built section into the page', async ({ page }) => {
+    await openEditor(page);
+    const frame = page.frameLocator('[data-testid="canvas-frame"]');
+    const before = await frame.locator('.c-faq').count();
+    await page.getByTestId('block-faq').click();
+    await expect(page.locator('.toolbar .status')).toHaveText(/saved/);
+    await expect.poll(() => frame.locator('.c-faq').count()).toBe(before + 1);
+    // undo to keep the shared fixture stable
+    await page.getByRole('button', { name: /undo/ }).click();
+    await expect.poll(() => frame.locator('.c-faq').count()).toBe(before);
+  });
+
   test('layout tab edits auto-layout tokens', async ({ page }) => {
     await openEditor(page);
     // select the testimonials section (grid) via outline

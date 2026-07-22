@@ -34,6 +34,17 @@ export interface Page {
   tree: WbNode;
 }
 
+export interface BlockSummary {
+  id: string;
+  name: string;
+  category: string;
+  description: string;
+}
+
+export interface Block extends BlockSummary {
+  node: WbNode;
+}
+
 export interface Theme {
   brandName: string;
   colors: Record<string, string>;

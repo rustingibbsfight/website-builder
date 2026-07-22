@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api';
 import { Inspector } from './Inspector';
-import { OutlineTree, Palette, PagesPanel } from './panels';
+import { BlocksPanel, OutlineTree, Palette, PagesPanel } from './panels';
 import { SeoDialog } from './SeoDialog';
 import { ThemeDialog } from './ThemeDialog';
 import { collectContainerIds, findNode, findParent, stripIds } from './tree-utils';
-import type { ComponentSummary, Page, PageSummary, Site, TreeOp, WbNode } from './types';
+import type { BlockSummary, ComponentSummary, Page, PageSummary, Site, TreeOp, WbNode } from './types';
 
 const VIEWPORTS = { desktop: '100%', tablet: '834px', mobile: '390px' } as const;
 type Viewport = keyof typeof VIEWPORTS;
@@ -40,6 +40,7 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
   const [pageId, setPageId] = useState<string | null>(null);
   const [page, setPage] = useState<Page | null>(null);
   const [components, setComponents] = useState<ComponentSummary[]>([]);
+  const [blocks, setBlocks] = useState<BlockSummary[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [viewport, setViewport] = useState<Viewport>('desktop');
   const [status, setStatus] = useState('');
@@ -62,6 +63,7 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
   useEffect(() => {
     api.getSite(siteId).then(setSite).catch((e: Error) => setStatus(`error: ${e.message}`));
     api.listComponents().then(setComponents).catch(() => {});
+    api.listBlocks().then(setBlocks).catch(() => {});
     api
       .listPages(siteId)
       .then((list) => {
@@ -219,6 +221,17 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
       await mutate([node]);
     },
     [mutate],
+  );
+
+  const insertBlock = useCallback(
+    async (blockId: string) => {
+      if (!page) return;
+      // Blocks are full sections — append to the page root (fetched fresh so ids
+      // are assigned server-side). Reuses mutate so it saves and is undoable.
+      const block = await api.getBlock(blockId);
+      await mutate([{ op: 'insert', parentId: page.tree.id, node: block.node as never }]);
+    },
+    [page, mutate],
   );
 
   const selectedNode = useMemo(
@@ -387,6 +400,7 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
           const parentId = selectedId && isContainer(selectedNode?.type ?? '') ? selectedId : page.tree.id;
           void insertComponent(type, parentId);
         }} />
+        <BlocksPanel blocks={blocks} onInsert={(id) => void insertBlock(id)} />
         <OutlineTree
           root={page.tree}
           selectedId={selectedId}

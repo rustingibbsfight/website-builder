@@ -1,5 +1,11 @@
 import { isContainer, validateNodeAgainstRegistry } from '@wb/components';
 import {
+  type Block,
+  type BlockSummary,
+  getBlock as getBlockDef,
+  listBlocks as listBlockDefs,
+} from './blocks.js';
+import {
   makeAssetResolver,
   pageBodyClass,
   renderCss,
@@ -135,6 +141,30 @@ export class WbCore {
 
   listTemplates(): TemplateInfo[] {
     return Object.values(TEMPLATES).map((t) => t.meta);
+  }
+
+  // ── Blocks (pre-composed section subtrees) ─────────────────────────────────
+
+  listBlocks(): BlockSummary[] {
+    return listBlockDefs();
+  }
+
+  getBlock(id: string): Block {
+    return getBlockDef(id);
+  }
+
+  /** Insert a pre-composed block subtree into a page (validated like any op). */
+  async insertBlock(
+    siteId: string,
+    pageIdOrSlug: string,
+    blockId: string,
+    parentId: string,
+    index?: number,
+  ): Promise<Page> {
+    const block = getBlockDef(blockId);
+    return this.applyPageOps(siteId, pageIdOrSlug, [
+      { op: 'insert', parentId, ...(index !== undefined ? { index } : {}), node: block.node },
+    ]);
   }
 
   createSiteFromTemplate(template: string, name?: string, brand: BrandOverrides = {}): Promise<Site> {

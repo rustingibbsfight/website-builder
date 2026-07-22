@@ -129,6 +129,29 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     };
   });
 
+  // ── Blocks (pre-composed sections) ─────────────────────────────────────────
+  app.get('/blocks', async () => core.listBlocks());
+  app.get('/blocks/:blockId', { schema: { params: z.object({ blockId: z.string() }).strict() } }, async (req, reply) => {
+    try {
+      return core.getBlock(req.params.blockId);
+    } catch (err) {
+      return reply.status(404).send({ error: err instanceof Error ? err.message : String(err) });
+    }
+  });
+  app.post(
+    '/sites/:siteId/pages/:pageId/blocks',
+    {
+      schema: {
+        params: PageParams,
+        body: z
+          .object({ blockId: z.string(), parentId: z.string(), index: z.number().int().min(0).optional() })
+          .strict(),
+      },
+    },
+    async (req) =>
+      core.insertBlock(req.params.siteId, req.params.pageId, req.body.blockId, req.body.parentId, req.body.index),
+  );
+
   // ── Templates & sites ────────────────────────────────────────────────────
   app.get('/templates', async () => core.listTemplates());
 
