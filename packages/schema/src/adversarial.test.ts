@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { applyOps, n, OpsError, type TreeOp } from './ops.js';
 import { collectIds, findNode, findParent, isDescendant, materializeNode, validateTreeStructure, walk } from './tree.js';
-import { NodeSchema, type WbNode } from './node.js';
+import { NodeInputSchema, NodeSchema, type WbNode } from './node.js';
 import { normalizeSlug, SLUG_RE } from './site.js';
 import { radiusPx, spacingPx } from './theme.js';
 
@@ -210,6 +210,18 @@ describe('schema recursion + slugs + theme scales', () => {
     const withIds = materializeNode(deep, new Set());
     expect(() => NodeSchema.parse(withIds)).not.toThrow();
     expect(() => NodeSchema.parse({ id: 'x', props: {} })).toThrow(); // missing type
+  });
+
+  it('rejects injection-unsafe node ids (id is interpolated into HTML/CSS)', () => {
+    // These would break out of a class value / attribute / CSS selector.
+    for (const badId of ['a"><script>', 'x" onmouseover="y', 'a}body{display:none', 'has space', 'a<b', "a'b"]) {
+      expect(() => NodeInputSchema.parse({ id: badId, type: 'heading', props: { text: 'x' } }), badId).toThrow();
+      expect(() => NodeSchema.parse({ id: badId, type: 'heading', props: {} }), badId).toThrow();
+    }
+    // Safe ids (generated form + hand-authored hyphen/underscore) are accepted.
+    for (const okId of ['abc123', 'sym-h', 'page_root', 'A1_b-2']) {
+      expect(() => NodeInputSchema.parse({ id: okId, type: 'heading', props: { text: 'x' } }), okId).not.toThrow();
+    }
   });
 
   it('normalizeSlug maps index→home and SLUG_RE rejects junk', () => {
