@@ -138,7 +138,14 @@ function applyOne(root: WbNode, op: TreeOp, ids: Set<string>, hooks: ApplyOpsHoo
       assertContainer(target, hooks);
       found.parent.children!.splice(found.index, 1);
       target.children ??= [];
-      target.children.splice(Math.min(op.index, target.children.length), 0, moving);
+      // `op.index` is a slot in the parent's children *as the caller sees them*,
+      // i.e. with `moving` still in place (that's what the drag UIs compute).
+      // When reordering within the same parent to a later slot, removing the node
+      // above the target shifts everything down one, so compensate — otherwise the
+      // node lands one position too far (e.g. [A,B,C] move A→2 would give B,C,A).
+      const sameParent = found.parent === target;
+      const insertIndex = sameParent && found.index < op.index ? op.index - 1 : op.index;
+      target.children.splice(Math.min(insertIndex, target.children.length), 0, moving);
       return;
     }
     case 'remove': {
