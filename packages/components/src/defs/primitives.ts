@@ -89,11 +89,27 @@ export const richText: ComponentDef<z.infer<typeof richTextProps>> = {
 .c-richText ul,.c-richText ol{padding-left:1.4em}`,
 };
 
+const FOCAL = {
+  center: '50% 50%',
+  top: '50% 0',
+  bottom: '50% 100%',
+  left: '0 50%',
+  right: '100% 50%',
+  'top-left': '0 0',
+  'top-right': '100% 0',
+  'bottom-left': '0 100%',
+  'bottom-right': '100% 100%',
+} as const;
+
 const imageProps = z
   .object({
     image: AssetRefSchema.describe('The image to show (assetId or url + alt)'),
     aspect: z.enum(['auto', 'square', 'video', 'wide']).default('auto').describe('Aspect ratio crop'),
     fit: z.enum(['cover', 'contain']).default('cover'),
+    focal: z
+      .enum(['center', 'top', 'bottom', 'left', 'right', 'top-left', 'top-right', 'bottom-left', 'bottom-right'])
+      .default('center')
+      .describe('Focal point kept in view when the image is cropped (object-position)'),
     rounded: z.boolean().default(false),
     caption: z.string().optional(),
   })
@@ -106,10 +122,14 @@ export const image: ComponentDef<z.infer<typeof imageProps>> = {
   category: 'primitive',
   isContainer: false,
   propsSchema: imageProps,
-  defaultProps: { image: { alt: '' }, aspect: 'auto', fit: 'cover', rounded: false },
+  defaultProps: { image: { alt: '' }, aspect: 'auto', fit: 'cover', focal: 'center', rounded: false },
   render: (node, props, ctx) => {
     const src = ctx.resolveAsset(props.image);
-    const img = `<img src="${escapeHtml(src)}" alt="${escapeHtml(props.image.alt ?? '')}" loading="lazy">`;
+    // Emit intrinsic dimensions when known so the browser reserves space (no
+    // layout shift). loading=lazy + decoding=async keep it off the critical path.
+    const dims =
+      props.image.width && props.image.height ? ` width="${props.image.width}" height="${props.image.height}"` : '';
+    const img = `<img src="${escapeHtml(src)}" alt="${escapeHtml(props.image.alt ?? '')}"${dims} loading="lazy" decoding="async">`;
     const inner = props.caption ? `${img}<figcaption>${escapeHtml(props.caption)}</figcaption>` : img;
     return el('figure', node, inner);
   },
@@ -121,6 +141,7 @@ export const image: ComponentDef<z.infer<typeof imageProps>> = {
     const aspects = { square: '1/1', video: '16/9', wide: '21/9' } as const;
     if (props.aspect !== 'auto') rules.push(`aspect-ratio:${aspects[props.aspect]}`);
     rules.push(`object-fit:${props.fit}`);
+    if (props.focal && props.focal !== 'center') rules.push(`object-position:${FOCAL[props.focal]}`);
     if (props.aspect !== 'auto') rules.push('height:100%');
     const imgRules = `${sel} img{${rules.join(';')}}`;
     return props.rounded ? `${imgRules}\n${sel} img{border-radius:var(--radius-md)}` : imgRules;

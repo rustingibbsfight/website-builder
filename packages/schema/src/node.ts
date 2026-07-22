@@ -5,6 +5,8 @@ export const AssetRefSchema = z.object({
   assetId: z.string().optional().describe('Id of an uploaded asset'),
   url: z.string().optional().describe('External or absolute URL (used when no assetId)'),
   alt: z.string().default('').describe('Alt text for accessibility'),
+  width: z.number().int().positive().optional().describe('Intrinsic pixel width (emitted to prevent layout shift)'),
+  height: z.number().int().positive().optional().describe('Intrinsic pixel height (emitted to prevent layout shift)'),
 });
 export type AssetRef = z.infer<typeof AssetRefSchema>;
 
