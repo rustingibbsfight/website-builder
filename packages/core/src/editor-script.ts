@@ -6,12 +6,14 @@
  *  in:  {type:'wb:select-node', nodeId}            → outline + scroll to node
  *  in:  {type:'wb:hittest', x, y, containerIds}    → find drop target under point
  *  in:  {type:'wb:clear-indicator'}
+ *  in:  {type:'wb:set-containers', containerIds}   → valid drop parents for in-canvas drag
  *  in:  {type:'wb:edit-begin', nodeId}             → start inline text editing on a node
  *  out: {type:'wb:ready'}
  *  out: {type:'wb:clicked', nodeId}
  *  out: {type:'wb:dblclick', nodeId}               → editor decides if node is text-editable
  *  out: {type:'wb:text-commit', nodeId, text}      → new plain text for the node
  *  out: {type:'wb:drop-target', containerId, index, rect:{...}}
+ *  out: {type:'wb:move-node', nodeId, containerId, index}  → drag-reorder result
  */
 export const EDITOR_PREVIEW_JS = `(function(){
 var selected=null;
@@ -29,12 +31,24 @@ style.textContent='.wb-ed-hover{outline:2px dashed #7c6ff0 !important;outline-of
 '#wb-ed-toolbar button{background:#333;color:#fff;border:0;border-radius:4px;padding:3px 9px;font-size:13px;line-height:1.2;cursor:pointer}'+
 '#wb-ed-toolbar button:hover{background:#555}'+
 '#wb-ed-indicator{position:absolute;background:#7c6ff0;pointer-events:none;z-index:99999;border-radius:2px}'+
+'.wb-ed-selected{cursor:grab}'+
+'.wb-ed-dragging{opacity:.55 !important;cursor:grabbing !important}'+
 'a,button{cursor:default !important}';
 document.head.appendChild(style);
 var indicator=document.createElement('div');
 indicator.id='wb-ed-indicator';
 indicator.style.display='none';
 document.body.appendChild(indicator);
+// Container node ids the editor considers valid drop parents (sent on load and
+// whenever the tree changes). Used to hit-test in-canvas node dragging.
+var containerIds=[];
+// In-canvas drag-to-reorder state.
+var dragCand=null;   // node id pressed, a drag candidate (past threshold → drag)
+var dragEl=null;     // the element being dragged
+var dragging=false;  // true once the pointer passed the start threshold
+var dragSX=0,dragSY=0;
+var dragTarget=null; // {containerId,index} under the pointer
+var justDragged=false;// suppress the click that follows a drag
 
 function nodeEl(el){return el&&el.closest?el.closest('[data-node-id]'):null}
 // Preview and editor are same-origin; target the exact origin, never '*'.
@@ -43,6 +57,9 @@ function send(msg){parent.postMessage(msg,location.origin)}
 document.addEventListener('click',function(e){
   // While editing, let clicks inside the editable place the caret normally.
   if(editing){var ce=nodeEl(e.target);if(ce&&ce.getAttribute('data-node-id')===editing)return}
+  // A drag just ended on this element — swallow the synthetic click so it
+  // doesn't re-select or deselect.
+  if(justDragged){justDragged=false;e.preventDefault();e.stopPropagation();return}
   e.preventDefault();e.stopPropagation();
   var el=nodeEl(e.target);
   if(el){setSelected(el.getAttribute('data-node-id'));send({type:'wb:clicked',nodeId:el.getAttribute('data-node-id')})}
@@ -63,6 +80,76 @@ document.addEventListener('mousemove',function(e){
   hoverEl=el;
   if(el&&el.getAttribute('data-node-id')!==selected)el.classList.add('wb-ed-hover');
 });
+
+// ── In-canvas drag-to-reorder ────────────────────────────────────────────────
+// Press on the already-selected block and drag it to a new slot among valid
+// containers. Pure editor chrome: on drop we emit a single move tree-op via the
+// editor; the published output is untouched.
+document.addEventListener('mousedown',function(e){
+  // New gesture — clear any stale drag-suppression flag (a drag that ends over a
+  // different element fires no click, so the flag wouldn't otherwise reset).
+  justDragged=false;
+  if(editing||e.button!==0)return;
+  var el=nodeEl(e.target);
+  // Only the currently-selected node is a drag handle (click-to-select first).
+  if(!el||el.getAttribute('data-node-id')!==selected)return;
+  dragCand=selected;dragEl=el;dragging=false;dragSX=e.clientX;dragSY=e.clientY;
+},true);
+document.addEventListener('mousemove',function(e){
+  if(!dragCand||editing)return;
+  if(!dragging){
+    if(Math.abs(e.clientX-dragSX)+Math.abs(e.clientY-dragSY)<5)return;
+    dragging=true;
+    if(hoverEl){hoverEl.classList.remove('wb-ed-hover');hoverEl=null;}
+    dragEl.classList.remove('wb-ed-selected','wb-ed-hover');
+    dragEl.classList.add('wb-ed-dragging');
+  }
+  e.preventDefault();
+  dragHittest(e.clientX,e.clientY);
+},true);
+document.addEventListener('mouseup',function(e){
+  if(!dragCand)return;
+  var wasDragging=dragging,node=dragCand,tgt=dragTarget;
+  dragCand=null;dragging=false;dragTarget=null;
+  indicator.style.display='none';
+  if(dragEl){dragEl.classList.remove('wb-ed-dragging');}
+  dragEl=null;
+  if(!wasDragging)return;
+  justDragged=true; // suppress the trailing click
+  e.preventDefault();e.stopPropagation();
+  if(tgt&&tgt.containerId){
+    send({type:'wb:move-node',nodeId:node,containerId:tgt.containerId,index:tgt.index});
+  }
+},true);
+
+// Like hittest, but for moving an existing node: skip the dragged node and any
+// container inside its own subtree (can't drop a node into itself).
+function dragHittest(x,y){
+  indicator.style.display='none';dragTarget=null;
+  var el=document.elementFromPoint(x,y);
+  var target=nodeEl(el);
+  while(target&&(containerIds.indexOf(target.getAttribute('data-node-id'))===-1||(dragEl&&dragEl.contains(target)))){
+    target=nodeEl(target.parentElement);
+  }
+  if(!target)return;
+  var containerId=target.getAttribute('data-node-id');
+  var kids=[].filter.call(target.querySelectorAll('[data-node-id]'),function(k){return nodeEl(k.parentElement)===target});
+  var index=kids.length;
+  for(var j=0;j<kids.length;j++){
+    var r=kids[j].getBoundingClientRect();
+    if(y<r.top+r.height/2){index=j;break}
+  }
+  var rect;
+  if(kids.length===0){var tr=target.getBoundingClientRect();rect={left:tr.left+4,top:tr.top+4,width:tr.width-8,height:4};}
+  else if(index>=kids.length){var lr=kids[kids.length-1].getBoundingClientRect();rect={left:lr.left,top:lr.bottom+2,width:lr.width,height:4};}
+  else{var nr=kids[index].getBoundingClientRect();rect={left:nr.left,top:nr.top-4,width:nr.width,height:4};}
+  indicator.style.display='block';
+  indicator.style.left=(rect.left+scrollX)+'px';
+  indicator.style.top=(rect.top+scrollY)+'px';
+  indicator.style.width=rect.width+'px';
+  indicator.style.height=rect.height+'px';
+  dragTarget={containerId:containerId,index:index};
+}
 
 function setSelected(nodeId){
   if(selected){var prev=document.querySelector('[data-node-id="'+selected+'"]');if(prev)prev.classList.remove('wb-ed-selected')}
@@ -197,6 +284,8 @@ addEventListener('message',function(e){
     hittest(d.x,d.y,d.containerIds||[]);
   }else if(d.type==='wb:clear-indicator'){
     indicator.style.display='none';
+  }else if(d.type==='wb:set-containers'){
+    containerIds=d.containerIds||[];
   }else if(d.type==='wb:edit-begin'){
     beginEdit(d.nodeId,d.rich,d.text);
   }

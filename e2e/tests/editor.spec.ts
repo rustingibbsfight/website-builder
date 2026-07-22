@@ -295,6 +295,61 @@ test.describe('visual editor', () => {
     await expect.poll(order).toEqual(['Alpha', 'Bravo', 'Charlie']);
   });
 
+  test('drag a block on the canvas to reorder it (direct manipulation)', async ({ page }) => {
+    const api = page.request;
+    const sites = (await (await api.get(`${BASE}/sites`)).json()) as Array<{ id: string }>;
+    const siteId = sites[0]!.id;
+    const pages = (await (await api.get(`${BASE}/sites/${siteId}/pages`)).json()) as Array<{ id: string }>;
+    const pageId = pages[0]!.id;
+    const full = (await (await api.get(`${BASE}/sites/${siteId}/pages/${pageId}`)).json()) as { tree: { id: string } };
+    await api.post(`${BASE}/sites/${siteId}/pages/${pageId}/tree/ops`, {
+      data: {
+        ops: [
+          {
+            op: 'insert',
+            parentId: full.tree.id,
+            node: {
+              type: 'section',
+              props: {},
+              layout: { direction: 'stack', gap: 'md' },
+              children: [
+                { type: 'heading', props: { text: 'Uno', level: 2 } },
+                { type: 'heading', props: { text: 'Dos', level: 2 } },
+                { type: 'heading', props: { text: 'Tres', level: 2 } },
+              ],
+            },
+          },
+        ],
+      },
+    });
+
+    await openEditor(page);
+    const frame = page.frameLocator('[data-testid="canvas-frame"]');
+    const order = async () => {
+      try {
+        return (await frame.locator('.c-heading').allInnerTexts()).filter((t) => ['Uno', 'Dos', 'Tres'].includes(t));
+      } catch {
+        return [];
+      }
+    };
+    await expect.poll(order).toEqual(['Uno', 'Dos', 'Tres']);
+
+    // Select "Uno", then drag it on the canvas to below "Tres" → Dos, Tres, Uno.
+    const uno = frame.locator('.c-heading', { hasText: 'Uno' });
+    await uno.click();
+    const from = (await uno.boundingBox())!;
+    const tres = frame.locator('.c-heading', { hasText: 'Tres' });
+    const to = (await tres.boundingBox())!;
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    // Pass the drag threshold, then move past Tres' midpoint to append after it.
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2 + 12, { steps: 4 });
+    await page.mouse.move(to.x + to.width / 2, to.y + to.height * 0.9, { steps: 8 });
+    await page.mouse.up();
+
+    await expect.poll(order).toEqual(['Dos', 'Tres', 'Uno']);
+  });
+
   test('SEO dialog edits page metadata and the renderer emits it', async ({ page }) => {
     await openEditor(page);
     await page.getByTestId('seo-open').click();
