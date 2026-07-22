@@ -114,6 +114,20 @@ describe('WbCore sites & pages', () => {
     expect((await core.listSymbols(site.id)).map((s) => s.id)).toEqual(['y']);
   });
 
+  it('sanitizes uploaded SVGs (strips script/handlers) (F3 hardening)', async () => {
+    const site = await core.createSite('SvgSan');
+    const evil =
+      '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(document.cookie)</script>' +
+      '<rect width="10" height="10" onload="alert(1)"/><a xlink:href="javascript:alert(2)">x</a></svg>';
+    const asset = await core.addAsset(site.id, 'logo.svg', 'image/svg+xml', evil);
+    const { buffer } = await core.readAsset(site.id, asset.id);
+    const out = buffer.toString('utf8');
+    expect(out).not.toMatch(/<script/i);
+    expect(out).not.toMatch(/onload\s*=/i);
+    expect(out).not.toMatch(/javascript:/i);
+    expect(out).toContain('<rect'); // legitimate graphics preserved
+  });
+
   it('rejects invalid component props via ops', async () => {
     const site = await core.createSite('Val Site');
     const page = (await core.listPages(site.id))[0]!;
