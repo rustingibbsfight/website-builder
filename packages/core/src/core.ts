@@ -249,12 +249,29 @@ export class WbCore {
       theme,
       ...(input.header ? { header: remap(input.header) } : {}),
       ...(input.footer ? { footer: remap(input.footer) } : {}),
+      ...(input.symbols
+        ? { symbols: Object.fromEntries(Object.entries(input.symbols).map(([k, v]) => [k, remap(v)])) }
+        : {}),
       settings: { locale: 'en', ...input.settings },
       createdAt: now,
       updatedAt: now,
     };
     if (site.header) this.validateTree(site.header);
     if (site.footer) this.validateTree(site.footer);
+    // Symbols are a supported bulk-import field — validate each definition and
+    // reject cycles (mirroring setSymbol) instead of silently dropping them.
+    if (site.symbols) {
+      for (const [id, node] of Object.entries(site.symbols)) {
+        if (!/^[a-zA-Z0-9][\w-]{0,63}$/.test(id)) throw new ValidationError(`invalid symbol id "${id}"`);
+        if (node.type === 'page-root') throw new ValidationError(`symbol "${id}" cannot be a page-root`);
+        this.validateTree(node);
+      }
+      for (const id of Object.keys(site.symbols)) {
+        if (symbolReferences(site.symbols, id).has(id)) {
+          throw new ValidationError(`symbol "${id}" contains a cycle`);
+        }
+      }
+    }
 
     const seenSlugs = new Set<string>();
     const pages: Page[] = input.pages.map((p, i) => {
@@ -408,7 +425,9 @@ export class WbCore {
 
   async getSymbol(siteId: string, symbolId: string): Promise<WbNode> {
     const site = await this.getSite(siteId);
-    const node = site.symbols?.[symbolId];
+    // Own-property check so ids like "__proto__"/"constructor" 404 instead of
+    // resolving to an inherited Object member.
+    const node = site.symbols && Object.hasOwn(site.symbols, symbolId) ? site.symbols[symbolId] : undefined;
     if (!node) throw new NotFoundError('symbol', symbolId);
     return node;
   }
@@ -434,7 +453,7 @@ export class WbCore {
 
   async deleteSymbol(siteId: string, symbolId: string): Promise<void> {
     const site = await this.getSite(siteId);
-    if (!site.symbols?.[symbolId]) throw new NotFoundError('symbol', symbolId);
+    if (!site.symbols || !Object.hasOwn(site.symbols, symbolId)) throw new NotFoundError('symbol', symbolId);
     const symbols = { ...site.symbols };
     delete symbols[symbolId];
     await this.sites.updateFields(

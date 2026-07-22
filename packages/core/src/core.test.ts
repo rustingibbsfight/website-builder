@@ -1,7 +1,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { OpsError } from '@wb/schema';
+import { DEFAULT_THEME, OpsError } from '@wb/schema';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WbCore } from './core.js';
 import { NotFoundError, ValidationError } from './errors.js';
@@ -80,6 +80,25 @@ describe('WbCore sites & pages', () => {
     await expect(
       core.applyPageOps(site.id, page.id, [{ op: 'move', nodeId: headingId, parentId: gridId, index: 0 }]),
     ).rejects.toThrow(/only allows children/);
+  });
+
+  it('importSite persists symbols and getSymbol resists proto lookups (#26 hardening)', async () => {
+    const site = await core.importSite({
+      name: 'Imported',
+      theme: DEFAULT_THEME,
+      symbols: { cta: { id: 'c', type: 'heading', props: { text: 'Hi', level: 2 }, children: [] } },
+      pages: [
+        {
+          slug: '',
+          title: 'Home',
+          tree: { id: 'r', type: 'page-root', props: {}, children: [{ id: 'i', type: 'symbolInstance', props: { symbolId: 'cta' } }] },
+        },
+      ],
+    });
+    // Symbols survive the import (previously silently dropped).
+    expect(await core.listSymbols(site.id)).toEqual([{ id: 'cta', rootType: 'heading' }]);
+    // Own-property lookup — inherited members 404, no Object.prototype leak.
+    await expect(core.getSymbol(site.id, '__proto__')).rejects.toThrow(NotFoundError);
   });
 
   it('rejects invalid component props via ops', async () => {
