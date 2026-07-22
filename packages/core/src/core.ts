@@ -625,7 +625,13 @@ export class WbCore {
     const safeName = sanitizeFilename(filename);
     const id = newId();
     const path = `${id}-${safeName}`;
-    await this.storage.put(siteId, path, content, mime);
+    // SVG is active content: an uploaded SVG with <script> executes in-origin
+    // when opened directly. Sanitize on ingest so NO serving/deploy target
+    // (R2, Vercel, Netlify, local) can run it — origin-agnostic, unlike a
+    // per-response header. <img>/<link> embedding is unaffected.
+    const isSvg = mime === 'image/svg+xml' || safeName.toLowerCase().endsWith('.svg');
+    const stored = isSvg ? sanitizeSvg(content) : content;
+    await this.storage.put(siteId, path, stored, mime);
     const asset: Asset = { id, siteId, filename: safeName, mime, path };
     await this.assets.insert(asset);
     await this.touchSite(siteId);
@@ -879,6 +885,24 @@ export class WbCore {
 /** Rewrite links in preview so navigation stays inside the preview prefix. Never published. */
 function previewNavScript(basePath: string, nonce: string): string {
   return `<script nonce="${nonce}">document.addEventListener('click',function(e){var a=e.target.closest('a[href^="/"]');if(!a)return;var p=a.getAttribute('href');if(p.indexOf(${JSON.stringify(basePath)})===0)return;e.preventDefault();location.href=${JSON.stringify(basePath)}+(p==='/'?'/':p)});</script>`;
+}
+
+/**
+ * Best-effort SVG sanitizer for uploaded assets: strips the primary
+ * script-execution vectors (script/foreignObject elements, on* handlers,
+ * javascript: hrefs, DTDs). Not a complete sanitizer — a full solution would
+ * parse the SVG — but it removes the vectors that matter for stored XSS while
+ * keeping normal vector graphics intact.
+ */
+function sanitizeSvg(content: Uint8Array | string): string {
+  const svg = typeof content === 'string' ? content : Buffer.from(content).toString('utf8');
+  return svg
+    .replace(/<!DOCTYPE[\s\S]*?>/gi, '') // drop DTDs (entity expansion / XXE)
+    .replace(/<script[\s\S]*?<\/script\s*>/gi, '') // <script>…</script>
+    .replace(/<script\b[^>]*\/>/gi, '') // self-closing <script/>
+    .replace(/<foreignObject[\s\S]*?<\/foreignObject\s*>/gi, '') // embedded HTML
+    .replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '') // on* event handlers
+    .replace(/(href|xlink:href)\s*=\s*("|')?\s*javascript:[^"'>\s]*/gi, '$1="#"'); // javascript: urls
 }
 
 /** Reduce a filename to a safe basename: word chars/dot/hyphen only, no dot-segments. */
