@@ -1,6 +1,44 @@
 import { useState } from 'react';
 import { nodeLabel } from './tree-utils';
-import type { ComponentSummary, PageSummary, WbNode } from './types';
+import type { BlockSummary, ComponentSummary, PageSummary, WbNode } from './types';
+
+export function BlocksPanel({
+  blocks,
+  onInsert,
+}: {
+  blocks: BlockSummary[];
+  onInsert: (id: string) => void;
+}) {
+  const cats = [...new Set(blocks.map((b) => b.category))];
+  if (blocks.length === 0) return null;
+  return (
+    <section className="panel palette">
+      <h2>Blocks</h2>
+      <p className="hint">Click to add a pre-built section to the page.</p>
+      {cats.map((cat) => (
+        <div key={cat}>
+          <h3>{cat}</h3>
+          <div className="palette-grid">
+            {blocks
+              .filter((b) => b.category === cat)
+              .map((b) => (
+                <button
+                  key={b.id}
+                  type="button"
+                  className="palette-item"
+                  title={b.description}
+                  data-testid={`block-${b.id}`}
+                  onClick={() => onInsert(b.id)}
+                >
+                  {b.name}
+                </button>
+              ))}
+          </div>
+        </div>
+      ))}
+    </section>
+  );
+}
 
 export function PagesPanel({
   pages,

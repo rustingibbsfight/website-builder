@@ -191,6 +191,39 @@ export function buildMcpServer(deps: McpDeps): McpServer {
   );
 
   server.tool(
+    'list_blocks',
+    'List pre-composed section blocks (hero, features, pricing, testimonials, FAQ, CTA, contact, …) that can be dropped into a page in one call. Returns id, name, category, description.',
+    {},
+    async () => {
+      try {
+        return text(core.listBlocks());
+      } catch (err) {
+        return errText(err);
+      }
+    },
+  );
+
+  server.tool(
+    'insert_block',
+    'Insert a pre-composed section block into a page (see list_blocks for ids). Inserts under parentId — use the page-root id from get_page — at an optional index (default: append).',
+    {
+      siteId: z.string(),
+      pageId: z.string(),
+      blockId: z.string(),
+      parentId: z.string().describe('Container to insert into; usually the page-root id from get_page'),
+      index: z.number().int().min(0).optional().describe('Position among children (default: append)'),
+    },
+    async ({ siteId, pageId, blockId, parentId, index }) => {
+      try {
+        const page = await core.insertBlock(siteId, pageId, blockId, parentId, index);
+        return text({ pageId: page.id, rootId: page.tree.id, inserted: blockId });
+      } catch (err) {
+        return errText(err);
+      }
+    },
+  );
+
+  server.tool(
     'set_page_meta',
     'Set a page’s SEO & Open Graph metadata (partial merge). Controls the <title>, meta description, canonical, og:*/twitter:* tags, and search-engine indexing. Pass an empty string to clear a field.',
     {

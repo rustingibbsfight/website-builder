@@ -1,4 +1,6 @@
 import type {
+  Block,
+  BlockSummary,
   ComponentDetail,
   ComponentSummary,
   Page,
@@ -52,6 +54,8 @@ export const api = {
   setTree: (siteId: string, pageId: string, tree: WbNode) =>
     req<Page>(`/sites/${siteId}/pages/${pageId}/tree`, { method: 'PUT', body: JSON.stringify(tree) }),
   listComponents: () => req<ComponentSummary[]>('/components'),
+  listBlocks: () => req<BlockSummary[]>('/blocks'),
+  getBlock: (id: string) => req<Block>(`/blocks/${id}`),
   getComponent: (type: string) => req<ComponentDetail>(`/components/${type}`),
   setTheme: (siteId: string, patch: Partial<Theme>) =>
     req<Theme>(`/sites/${siteId}/theme`, { method: 'PUT', body: JSON.stringify(patch) }),

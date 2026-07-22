@@ -44,6 +44,15 @@ describe('REST API', () => {
     expect(hero.propsSchema.properties).toHaveProperty('headline');
   });
 
+  it('lists blocks and serves a block subtree', async () => {
+    const list = (await app.inject({ url: '/blocks' })).json() as Array<{ id: string; category: string }>;
+    expect(list.length).toBeGreaterThan(0);
+    expect(list.some((b) => b.id === 'faq')).toBe(true);
+    const faq = (await app.inject({ url: '/blocks/faq' })).json() as { id: string; node: { type: string } };
+    expect(faq.node.type).toBe('faq');
+    expect((await app.inject({ url: '/blocks/nope' })).statusCode).toBe(404);
+  });
+
   it('full flow: template → edit via ops → publish', async () => {
     const created = (
       await app.inject({
