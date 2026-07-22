@@ -1,5 +1,6 @@
 import { escapeHtml, type RenderCtx } from '@wb/components';
 import { normalizeSlug, type Asset, type Page, type Site } from '@wb/schema';
+import { ogFallbackPath, ogFallbackSvg } from './og-image.js';
 import { renderCss, type CssTree } from './render-css.js';
 import { lintPage, pageBodyClass, renderPage, type LintWarning } from './render-page.js';
 
@@ -50,6 +51,9 @@ export function renderSite(site: Site, pages: Page[], assets: Asset[]): RenderSi
     }
     files.set(path, renderPage(site, page, { resolveAsset }));
     warnings.push(...lintPage(site, page));
+    // Auto-generate a branded OG fallback card for pages with no explicit image.
+    // headHtml references this exact path under the same condition.
+    if (!page.meta.ogImage) files.set(ogFallbackPath(page), ogFallbackSvg(site, page));
   }
 
   files.set('404.html', render404(site));
