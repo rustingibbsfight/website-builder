@@ -148,6 +148,31 @@ describe('widget components', () => {
     expect(noEndpoint).not.toContain('name="_hp"');
   });
 
+  it('image emits lazy + async decoding, intrinsic dims when known, and a focal crop', () => {
+    const html = render('image', { image: { url: '/p.jpg', alt: 'P', width: 800, height: 600 }, aspect: 'square', focal: 'top' });
+    expect(html).toContain('loading="lazy"');
+    expect(html).toContain('decoding="async"');
+    expect(html).toContain('width="800"');
+    expect(html).toContain('height="600"');
+    const css = getComponent('image').nodeCss?.(
+      { id: 'w1', type: 'image', props: {}, children: [] } as unknown as WbNode,
+      parseProps('image', { image: { url: '/p.jpg', alt: 'P' }, aspect: 'square', focal: 'top' }),
+      '.c-image',
+    );
+    expect(css).toContain('object-position:50% 0');
+  });
+
+  it('image omits dims when unknown and object-position when centered', () => {
+    const html = render('image', { image: { url: '/p.jpg', alt: 'P' } });
+    expect(html).not.toContain('width=');
+    const css = getComponent('image').nodeCss?.(
+      { id: 'w1', type: 'image', props: {}, children: [] } as unknown as WbNode,
+      parseProps('image', { image: { url: '/p.jpg', alt: 'P' } }),
+      '.c-image',
+    );
+    expect(css).not.toContain('object-position');
+  });
+
   it('escapes user text — no HTML injection through widget props', () => {
     const html = render('statRow', { stats: [{ value: '<script>x</script>', label: '"><img>' }] });
     expect(html).not.toContain('<script>x');
