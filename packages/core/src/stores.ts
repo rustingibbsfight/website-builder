@@ -118,6 +118,29 @@ export class SiteStore {
     return res.rowsAffected > 0;
   }
 
+  /**
+   * Atomically set/replace one symbol in the JSON map (#26). A single json_set
+   * statement so concurrent edits to DIFFERENT symbols can't clobber each other
+   * (the read-modify-write of updateFields could). `symbolId` is validated
+   * `[A-Za-z0-9_-]` upstream, so quoting the path key is injection-safe.
+   */
+  async setSymbol(siteId: string, symbolId: string, node: WbNode, updatedAt: string): Promise<boolean> {
+    const res = await this.db.execute({
+      sql: `UPDATE sites SET symbols_json = json_set(COALESCE(symbols_json, '{}'), ?, json(?)), updated_at=? WHERE id=?`,
+      args: [`$."${symbolId}"`, JSON.stringify(node), updatedAt, siteId],
+    });
+    return res.rowsAffected > 0;
+  }
+
+  /** Atomically remove one symbol from the JSON map (leaves other keys intact). */
+  async removeSymbol(siteId: string, symbolId: string, updatedAt: string): Promise<boolean> {
+    const res = await this.db.execute({
+      sql: `UPDATE sites SET symbols_json = json_remove(symbols_json, ?), updated_at=? WHERE id=? AND symbols_json IS NOT NULL`,
+      args: [`$."${symbolId}"`, updatedAt, siteId],
+    });
+    return res.rowsAffected > 0;
+  }
+
   async get(id: string): Promise<Site | null> {
     const rows = (await this.db.execute({ sql: 'SELECT * FROM sites WHERE id=?', args: [id] })).rows;
     return rows[0] ? siteFromRow(rows[0]) : null;
