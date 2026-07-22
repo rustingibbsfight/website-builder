@@ -301,4 +301,51 @@ test.describe('visual editor', () => {
     await expect(page.locator('.toolbar .status')).toHaveText(/saved/);
     await expect(frame.locator('.c-heading', { hasText: 'Heading' })).toBeVisible();
   });
+
+  test('rich inline text: double-click a richText node edits its markdown with a toolbar', async ({ page }) => {
+    const api = page.request;
+    const sites = (await (await api.get(`${BASE}/sites`)).json()) as Array<{ id: string }>;
+    const siteId = sites[0]!.id;
+    const pages = (await (await api.get(`${BASE}/sites/${siteId}/pages`)).json()) as Array<{ id: string }>;
+    const pageId = pages[0]!.id;
+    const full = (await (await api.get(`${BASE}/sites/${siteId}/pages/${pageId}`)).json()) as {
+      tree: { id: string };
+    };
+    await api.post(`${BASE}/sites/${siteId}/pages/${pageId}/tree/ops`, {
+      data: { ops: [{ op: 'insert', parentId: full.tree.id, node: { type: 'richText', props: { markdown: 'Hello **world**' } } }] },
+    });
+
+    await openEditor(page);
+    const frame = page.frameLocator('[data-testid="canvas-frame"]');
+    const rt = frame.locator('.c-richText');
+    await expect(rt).toBeVisible();
+    await expect(rt.locator('strong')).toHaveText('world'); // renders bold before editing
+
+    // Double-click → edits the markdown SOURCE in place, with a floating toolbar.
+    await rt.dblclick();
+    await expect(rt).toHaveAttribute('contenteditable', 'true');
+    await expect(frame.locator('#wb-ed-toolbar')).toBeVisible();
+    await expect(rt).toContainText('**world**'); // raw markdown shown while editing
+
+    await page.keyboard.press('ControlOrMeta+A');
+    await page.keyboard.type('Fresh **copy** here');
+    await page.locator('.editor .toolbar .brand').click(); // click away → commit
+
+    // Persisted markdown + re-rendered bold.
+    await expect
+      .poll(async () => {
+        const p = (await (await api.get(`${BASE}/sites/${siteId}/pages/${pageId}`)).json()) as { tree: WbNodeLike };
+        const find = (nd: WbNodeLike): WbNodeLike | null =>
+          nd.type === 'richText' ? nd : (nd.children ?? []).map(find).find(Boolean) ?? null;
+        return find(p.tree)?.props?.markdown;
+      })
+      .toBe('Fresh **copy** here');
+    await expect(frame.locator('.c-richText strong')).toHaveText('copy');
+  });
 });
+
+interface WbNodeLike {
+  type: string;
+  props?: { markdown?: string };
+  children?: WbNodeLike[];
+}

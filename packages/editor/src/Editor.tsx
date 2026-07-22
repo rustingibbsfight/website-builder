@@ -28,6 +28,10 @@ const INLINE_TEXT_PROP: Record<string, string> = {
   button: 'label',
 };
 
+/** Rich-text components edited inline as their markdown SOURCE (with a toolbar),
+ * rather than as plain textContent. Maps type → the markdown prop. */
+const RICH_TEXT_PROP: Record<string, string> = { richText: 'markdown' };
+
 export interface DragState {
   kind: 'palette' | 'node';
   type?: string;
@@ -117,11 +121,18 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
             { type: 'wb:edit-begin', nodeId: d.nodeId },
             window.location.origin,
           );
+        } else if (node && RICH_TEXT_PROP[node.type]) {
+          // Send the markdown source so the canvas edits it in place with a toolbar.
+          const source = (node.props as Record<string, unknown>)[RICH_TEXT_PROP[node.type]!];
+          frameRef.current?.contentWindow?.postMessage(
+            { type: 'wb:edit-begin', nodeId: d.nodeId, rich: true, text: typeof source === 'string' ? source : '' },
+            window.location.origin,
+          );
         }
       }
       if (d.type === 'wb:text-commit' && d.nodeId && typeof d.text === 'string') {
         const node = pageRef.current ? findNode(pageRef.current.tree, d.nodeId) : null;
-        const prop = node ? INLINE_TEXT_PROP[node.type] : undefined;
+        const prop = node ? (INLINE_TEXT_PROP[node.type] ?? RICH_TEXT_PROP[node.type]) : undefined;
         const current = node ? (node.props as Record<string, unknown>)[prop ?? ''] : undefined;
         if (node && prop && d.text && d.text !== current) {
           mutateRef.current([{ op: 'update', nodeId: d.nodeId, props: { [prop]: d.text } }]);
