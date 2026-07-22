@@ -33,6 +33,12 @@ async function getApp(): Promise<FastifyInstance> {
       await app.ready();
       return app;
     })();
+    // Don't cache a REJECTED promise — a transient failure (DB briefly
+    // unreachable) would otherwise brick the warm instance for every later
+    // request. Clear it so the next request retries the init.
+    appPromise.catch(() => {
+      appPromise = null;
+    });
   }
   return appPromise;
 }

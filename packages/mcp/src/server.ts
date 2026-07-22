@@ -2,6 +2,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { componentJsonSchema, componentSummary, getComponent, listComponents } from '@wb/components';
 import { WbCore } from '@wb/core';
 import { NodeInputSchema, ThemeSchema, TreeOpSchema, normalizeSlug } from '@wb/schema';
+import { isIP } from 'node:net';
+import { lookup } from 'node:dns/promises';
 import { z } from 'zod';
 import { treeOutline } from './outline.js';
 
@@ -24,6 +26,73 @@ const errText = (err: unknown) => ({
 
 /** Cap fetched assets so a hostile/oversized URL can't exhaust memory. */
 const MAX_ASSET_BYTES = 20 * 1024 * 1024;
+
+/** True for loopback / private / link-local / unique-local / metadata IPs. */
+function isPrivateIp(ip: string): boolean {
+  if (isIP(ip) === 4) {
+    const [a, b] = ip.split('.').map(Number) as [number, number];
+    return (
+      a === 0 || a === 10 || a === 127 || a >= 224 || (a === 169 && b === 254) || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31)
+    );
+  }
+  const lo = ip.toLowerCase();
+  if (lo === '::1' || lo === '::') return true;
+  if (lo.startsWith('::ffff:')) return isPrivateIp(lo.slice(7)); // IPv4-mapped
+  return lo.startsWith('fe80') || lo.startsWith('fc') || lo.startsWith('fd'); // link-local / unique-local
+}
+
+/** Reject non-http(s) and any URL whose host is (or resolves to) an internal
+ *  address — the core SSRF guard for agent-supplied asset URLs. */
+async function assertPublicUrl(raw: string): Promise<void> {
+  let u: URL;
+  try {
+    u = new URL(raw);
+  } catch {
+    throw new Error('invalid url');
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new Error('only http(s) asset urls are allowed');
+  const host = u.hostname.replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host.endsWith('.localhost')) throw new Error('refusing to fetch a local address');
+  if (isIP(host)) {
+    if (isPrivateIp(host)) throw new Error('refusing to fetch a private/internal address');
+    return;
+  }
+  const resolved = await lookup(host, { all: true });
+  if (resolved.some((r) => isPrivateIp(r.address))) {
+    throw new Error('refusing to fetch a host that resolves to a private/internal address');
+  }
+}
+
+/** Fetch a URL, streaming with a hard byte cap so a body with no/false
+ *  Content-Length can't exhaust memory. Redirects are refused (a public URL
+ *  could otherwise bounce to an internal one, bypassing assertPublicUrl). */
+async function fetchCapped(url: string, max: number): Promise<{ bytes: Uint8Array; mime: string }> {
+  const res = await fetch(url, { redirect: 'error' });
+  if (!res.ok) throw new Error(`fetch ${url} failed: ${res.status}`);
+  const declared = Number(res.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > max) throw new Error(`asset too large: ${declared} bytes (max ${max})`);
+  const reader = res.body?.getReader();
+  if (!reader) throw new Error('empty response body');
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > max) {
+      await reader.cancel();
+      throw new Error(`asset too large (max ${max} bytes)`);
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) {
+    bytes.set(c, off);
+    off += c.byteLength;
+  }
+  return { bytes, mime: res.headers.get('content-type') ?? 'application/octet-stream' };
+}
 
 const BrandShape = z
   .object({
@@ -331,17 +400,12 @@ export function buildMcpServer(deps: McpDeps): McpServer {
         let content: Uint8Array;
         let resolvedMime = mime;
         if (url) {
-          const res = await fetch(url);
-          if (!res.ok) return errText(new Error(`fetch ${url} failed: ${res.status}`));
-          const declared = Number(res.headers.get('content-length') ?? '');
-          if (Number.isFinite(declared) && declared > MAX_ASSET_BYTES) {
-            return errText(new Error(`asset too large: ${declared} bytes (max ${MAX_ASSET_BYTES})`));
-          }
-          content = new Uint8Array(await res.arrayBuffer());
-          if (content.byteLength > MAX_ASSET_BYTES) {
-            return errText(new Error(`asset too large: ${content.byteLength} bytes (max ${MAX_ASSET_BYTES})`));
-          }
-          resolvedMime ??= res.headers.get('content-type') ?? 'application/octet-stream';
+          // Block SSRF (internal/metadata hosts) and cap the streamed body so a
+          // hostile URL can't reach internal services or exhaust memory.
+          await assertPublicUrl(url);
+          const fetched = await fetchCapped(url, MAX_ASSET_BYTES);
+          content = fetched.bytes;
+          resolvedMime ??= fetched.mime;
         } else if (base64) {
           content = Buffer.from(base64, 'base64');
           resolvedMime ??= guessMime(filename);
