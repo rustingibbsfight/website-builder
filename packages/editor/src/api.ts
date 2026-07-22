@@ -1,9 +1,13 @@
 import type { ComponentDetail, ComponentSummary, Page, PageSummary, Site, Theme, TreeOp, WbNode } from './types';
 
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
+  // Only advertise a JSON body when there actually is one. Sending
+  // `content-type: application/json` on a bodyless request (e.g. DELETE) makes
+  // the server reject it with 400 "Body cannot be empty…".
+  const headers = init?.body != null ? { 'content-type': 'application/json' } : undefined;
   const res = await fetch(url, {
-    headers: { 'content-type': 'application/json' },
     ...init,
+    headers: { ...headers, ...init?.headers },
   });
   if (!res.ok) {
     let message = `${res.status}`;

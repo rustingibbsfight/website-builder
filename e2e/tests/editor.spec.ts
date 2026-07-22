@@ -138,6 +138,27 @@ test.describe('visual editor', () => {
     await expect(page.locator('.toolbar .status')).toHaveText(/published 4 pages/, { timeout: 15_000 });
   });
 
+  test('add then delete a page (regression: bodyless DELETE must not 400)', async ({ page }) => {
+    await openEditor(page);
+    await expect(page.locator('.pages li')).toHaveCount(4);
+
+    // Add a throwaway page.
+    await page.locator('button[title="Add page"]').click();
+    await page.getByPlaceholder(/slug/).fill('scratch-del');
+    await page.getByPlaceholder('Title').fill('Scratch');
+    await page.getByRole('button', { name: 'Add', exact: true }).click();
+    await expect(page.locator('.pages li')).toHaveCount(5);
+
+    // Delete it — auto-accept the confirm dialog. Before the fix this DELETE was
+    // sent with `content-type: application/json` and no body, and the server 400'd,
+    // so the page was never removed.
+    page.on('dialog', (d) => void d.accept());
+    await page.locator('.pages li', { hasText: 'scratch-del' }).locator('button[title="Delete page"]').click();
+
+    await expect(page.locator('.pages li')).toHaveCount(4);
+    await expect(page.locator('.pages li', { hasText: 'scratch-del' })).toHaveCount(0);
+  });
+
   test('inline WYSIWYG: double-click a text node and type on the canvas', async ({ page }) => {
     await openEditor(page);
     const frame = page.frameLocator('[data-testid="canvas-frame"]');
