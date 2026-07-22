@@ -287,3 +287,43 @@ export class BuildStore {
     await this.db.execute({ sql: 'DELETE FROM builds WHERE site_id=?', args: [siteId] });
   }
 }
+
+export interface SubmissionRecord {
+  id: string;
+  siteId: string;
+  formId: string;
+  data: Record<string, string>;
+  createdAt: string;
+}
+
+export class SubmissionStore {
+  constructor(private db: Client) {}
+
+  async insert(sub: SubmissionRecord): Promise<void> {
+    await this.db.execute({
+      sql: `INSERT INTO submissions (id, site_id, form_id, data_json, created_at) VALUES (?, ?, ?, ?, ?)`,
+      args: [sub.id, sub.siteId, sub.formId, JSON.stringify(sub.data), sub.createdAt],
+    });
+  }
+
+  async listForSite(siteId: string, formId?: string): Promise<SubmissionRecord[]> {
+    const rows = (
+      await this.db.execute(
+        formId
+          ? { sql: 'SELECT * FROM submissions WHERE site_id=? AND form_id=? ORDER BY created_at DESC', args: [siteId, formId] }
+          : { sql: 'SELECT * FROM submissions WHERE site_id=? ORDER BY created_at DESC', args: [siteId] },
+      )
+    ).rows;
+    return rows.map((r) => ({
+      id: str(r.id),
+      siteId: str(r.site_id),
+      formId: str(r.form_id),
+      data: JSON.parse(str(r.data_json)) as Record<string, string>,
+      createdAt: str(r.created_at),
+    }));
+  }
+
+  async deleteForSite(siteId: string): Promise<void> {
+    await this.db.execute({ sql: 'DELETE FROM submissions WHERE site_id=?', args: [siteId] });
+  }
+}

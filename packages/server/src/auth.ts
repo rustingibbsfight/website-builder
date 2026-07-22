@@ -21,6 +21,17 @@ function isOpenPath(path: string): boolean {
   );
 }
 
+/**
+ * The one write endpoint reachable without a token: a published (static) site
+ * POSTing a form submission back to the API. Method- and shape-scoped so only
+ * `POST /sites/<id>/submissions/<formId>` is open — reading submissions still
+ * requires auth. (#27)
+ */
+const SUBMISSION_POST = /^\/sites\/[^/]+\/submissions\/[^/]+$/;
+function isPublicSubmission(method: string, path: string): boolean {
+  return method === 'POST' && SUBMISSION_POST.test(path);
+}
+
 function tokenMatches(expected: string, candidate: string | undefined): boolean {
   if (!candidate) return false;
   const a = Buffer.from(expected);
@@ -113,7 +124,7 @@ export async function registerAuth(app: FastifyInstance, apiToken: string | unde
 
   app.addHook('onRequest', async (req, reply) => {
     const path = req.url.split('?')[0]!;
-    if (isOpenPath(path)) return;
+    if (isOpenPath(path) || isPublicSubmission(req.method, path)) return;
     const ok =
       tokenMatches(apiToken, bearerOf(req.headers.authorization)) ||
       tokenMatches(apiToken, req.headers['x-api-key'] as string | undefined) ||

@@ -9,10 +9,10 @@ const ctx: RenderCtx = {
   renderNode: (node: WbNode) => `<!--child:${node.id}-->`,
 };
 
-function render(type: string, props: Record<string, unknown>): string {
+function render(type: string, props: Record<string, unknown>, ctxOverride: Partial<RenderCtx> = {}): string {
   const parsed = parseProps(type, props);
   const node: WbNode = { id: 'w123456789', type, props: parsed, children: [] };
-  return getComponent(type).render(node, parsed, ctx);
+  return getComponent(type).render(node, parsed, { ...ctx, ...ctxOverride });
 }
 
 describe('widget components', () => {
@@ -114,6 +114,38 @@ describe('widget components', () => {
     );
     expect(css).toContain('#wb-tabs-w123456789-0:checked');
     expect(css).toContain('.wb-tabpanel:nth-of-type(2){display:block}');
+  });
+
+  it('contactForm store=true posts to the wb-api submissions endpoint with a honeypot', () => {
+    const html = render(
+      'contactForm',
+      { store: true, fields: [{ name: 'email', label: 'Email', type: 'email', required: true }] },
+      { siteId: 'site42', formEndpoint: 'https://api.example.com/' },
+    );
+    expect(html).toContain('action="https://api.example.com/sites/site42/submissions/w123456789"');
+    expect(html).toContain('method="POST"');
+    expect(html).toContain('name="_hp"'); // spam honeypot
+    // Zero-JS: still no scripts or handlers.
+    expect(html).not.toMatch(/<script|\son[a-z]+=/i);
+  });
+
+  it('contactForm store=true honours an explicit formId', () => {
+    const html = render(
+      'contactForm',
+      { store: true, formId: 'newsletter', fields: [{ name: 'email', label: 'Email', type: 'email' }] },
+      { siteId: 'site42', formEndpoint: 'https://api.example.com' },
+    );
+    expect(html).toContain('/sites/site42/submissions/newsletter"');
+  });
+
+  it('contactForm without store (or endpoint) keeps the external action and no honeypot', () => {
+    const external = render('contactForm', { action: 'https://formspree.io/f/abc', fields: [{ name: 'email', label: 'E', type: 'email' }] });
+    expect(external).toContain('action="https://formspree.io/f/abc"');
+    expect(external).not.toContain('name="_hp"');
+    // store=true but no endpoint configured → no store action, no honeypot.
+    const noEndpoint = render('contactForm', { store: true, fields: [{ name: 'email', label: 'E', type: 'email' }] });
+    expect(noEndpoint).not.toContain('submissions/');
+    expect(noEndpoint).not.toContain('name="_hp"');
   });
 
   it('escapes user text — no HTML injection through widget props', () => {

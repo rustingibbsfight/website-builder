@@ -36,7 +36,7 @@ const textOf = (result: unknown): string => {
 };
 
 describe('MCP server', () => {
-  it('exposes the 14 tools', async () => {
+  it('exposes the 15 tools', async () => {
     const { tools } = await client.listTools();
     expect(tools.map((t) => t.name).sort()).toEqual([
       'add_asset',
@@ -48,6 +48,7 @@ describe('MCP server', () => {
       'insert_block',
       'list_blocks',
       'list_components',
+      'list_submissions',
       'list_templates',
       'preview_site',
       'publish_site',

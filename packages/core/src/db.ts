@@ -56,6 +56,18 @@ const MIGRATIONS: string[][] = [
       manifest_json TEXT NOT NULL
     )`,
   ],
+  // v2 — captured form submissions (see #27). form_id groups a site's forms;
+  // data_json holds the validated field values.
+  [
+    `CREATE TABLE IF NOT EXISTS submissions (
+      id TEXT PRIMARY KEY,
+      site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+      form_id TEXT NOT NULL,
+      data_json TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_submissions_site ON submissions(site_id, created_at)`,
+  ],
 ];
 
 /**
