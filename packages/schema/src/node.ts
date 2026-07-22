@@ -59,6 +59,17 @@ export const StyleSchema = z
     background: z
       .union([
         ColorTokenSchema,
+        z
+          .object({
+            gradient: z
+              .object({
+                from: ColorTokenSchema.describe('Gradient start color'),
+                to: ColorTokenSchema.describe('Gradient end color'),
+                angle: z.number().int().min(0).max(360).default(180).describe('Gradient angle in degrees'),
+              })
+              .strict(),
+          })
+          .strict(),
         z.object({
           image: AssetRefSchema.describe('Background image'),
           overlay: ColorTokenSchema.optional().describe('Color overlay drawn over the image'),
@@ -66,6 +77,9 @@ export const StyleSchema = z
       ])
       .optional(),
     color: ColorTokenSchema.optional().describe('Text color'),
+    fontWeight: z.enum(['normal', 'medium', 'semibold', 'bold']).optional().describe('Text weight'),
+    letterSpacing: z.enum(['tight', 'normal', 'wide']).optional().describe('Letter spacing'),
+    textTransform: z.enum(['none', 'uppercase', 'capitalize']).optional().describe('Text casing'),
     radius: RadiusTokenSchema.optional(),
     shadow: ShadowTokenSchema.optional(),
     border: z
