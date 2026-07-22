@@ -54,6 +54,8 @@ export function Inspector({
 }) {
   const [detail, setDetail] = useState<ComponentDetail | null>(null);
   const [tab, setTab] = useState<'props' | 'layout' | 'style'>('props');
+  // Which breakpoint the layout tab edits: base, or a responsive override.
+  const [bp, setBp] = useState<'base' | 'tablet' | 'mobile'>('base');
 
   useEffect(() => {
     setDetail(null);
@@ -77,6 +79,23 @@ export function Inspector({
   const setLayout = (key: string, value: unknown) => {
     onOps([{ op: 'update', nodeId: node.id, layout: { [key]: value === '' ? null : value } }]);
   };
+
+  // Layout for the active breakpoint: base edits node.layout; tablet/mobile edit
+  // responsive.<bp>.layout deltas (the renderer emits them as media queries).
+  const bpLayout = bp === 'base' ? layout : ((responsive[bp]?.layout as Record<string, unknown>) ?? {});
+  const setLayoutAt = (key: string, value: unknown) => {
+    if (bp === 'base') return setLayout(key, value);
+    const curBpLayout = { ...((responsive[bp]?.layout as Record<string, unknown>) ?? {}) };
+    if (value === '' || value === undefined) delete curBpLayout[key];
+    else curBpLayout[key] = value;
+    const curBp = { ...(responsive[bp] ?? {}) } as Record<string, unknown>;
+    if (Object.keys(curBpLayout).length) curBp.layout = curBpLayout;
+    else delete curBp.layout;
+    const next = { ...responsive, [bp]: Object.keys(curBp).length ? curBp : undefined };
+    onOps([{ op: 'update', nodeId: node.id, responsive: next as never }]);
+  };
+  const isOverridden = (key: string) =>
+    bp !== 'base' && (responsive[bp]?.layout as Record<string, unknown> | undefined)?.[key] !== undefined;
 
   const setStyle = (key: string, value: unknown) => {
     onOps([{ op: 'update', nodeId: node.id, style: { [key]: value === '' ? null : value } }]);
@@ -201,45 +220,70 @@ export function Inspector({
         <div className="fields">
           {isContainer(node.type) || node.layout ? (
             <>
+              <div className="bp-switch" role="group" aria-label="Breakpoint">
+                {(['base', 'tablet', 'mobile'] as const).map((b) => (
+                  <button
+                    key={b}
+                    type="button"
+                    className={`bp-btn${bp === b ? ' on' : ''}${b !== 'base' && responsive[b]?.layout ? ' has' : ''}`}
+                    data-testid={`bp-${b}`}
+                    aria-pressed={bp === b}
+                    onClick={() => setBp(b)}
+                  >
+                    {b}
+                  </button>
+                ))}
+              </div>
+              {bp !== 'base' && (
+                <p className="hint">
+                  Editing the <b>{bp}</b> override. Empty fields inherit the base layout; set one to override it at ≤{bp === 'tablet' ? 'tablet' : 'mobile'} width.
+                </p>
+              )}
               <Select
-                label="direction"
+                label={`direction${isOverridden('direction') ? ' •' : ''}`}
                 testId="layout-direction"
-                value={(layout.direction as string) ?? ''}
+                value={(bpLayout.direction as string) ?? ''}
                 options={['', 'stack', 'row', 'grid']}
-                onChange={(v) => setLayout('direction', v)}
+                onChange={(v) => setLayoutAt('direction', v)}
               />
-              {layout.direction === 'grid' && (
+              {((bpLayout.direction as string) ?? layout.direction) === 'grid' && (
                 <Select
-                  label="columns"
-                  value={String(layout.columns ?? '')}
+                  label={`columns${isOverridden('columns') ? ' •' : ''}`}
+                  value={String((bpLayout.columns as number | string) ?? '')}
                   options={['', '1', '2', '3', '4', '5', '6']}
-                  onChange={(v) => setLayout('columns', v === '' ? '' : Number(v))}
+                  onChange={(v) => setLayoutAt('columns', v === '' ? '' : Number(v))}
                 />
               )}
-              <Select label="gap" value={(layout.gap as string) ?? ''} options={GAP_TOKENS} onChange={(v) => setLayout('gap', v)} />
               <Select
-                label="padding"
-                value={typeof layout.padding === 'string' ? layout.padding : ''}
+                label={`gap${isOverridden('gap') ? ' •' : ''}`}
+                testId="layout-gap"
+                value={(bpLayout.gap as string) ?? ''}
                 options={GAP_TOKENS}
-                onChange={(v) => setLayout('padding', v)}
+                onChange={(v) => setLayoutAt('gap', v)}
               />
               <Select
-                label="align"
-                value={(layout.align as string) ?? ''}
+                label={`padding${isOverridden('padding') ? ' •' : ''}`}
+                value={typeof bpLayout.padding === 'string' ? bpLayout.padding : ''}
+                options={GAP_TOKENS}
+                onChange={(v) => setLayoutAt('padding', v)}
+              />
+              <Select
+                label={`align${isOverridden('align') ? ' •' : ''}`}
+                value={(bpLayout.align as string) ?? ''}
                 options={['', 'start', 'center', 'end', 'stretch']}
-                onChange={(v) => setLayout('align', v)}
+                onChange={(v) => setLayoutAt('align', v)}
               />
               <Select
-                label="justify"
-                value={(layout.justify as string) ?? ''}
+                label={`justify${isOverridden('justify') ? ' •' : ''}`}
+                value={(bpLayout.justify as string) ?? ''}
                 options={['', 'start', 'center', 'end', 'between']}
-                onChange={(v) => setLayout('justify', v)}
+                onChange={(v) => setLayoutAt('justify', v)}
               />
               <Select
-                label="max width"
-                value={(layout.maxWidth as string) ?? ''}
+                label={`max width${isOverridden('maxWidth') ? ' •' : ''}`}
+                value={(bpLayout.maxWidth as string) ?? ''}
                 options={['', 'content', 'wide', 'full']}
-                onChange={(v) => setLayout('maxWidth', v)}
+                onChange={(v) => setLayoutAt('maxWidth', v)}
               />
             </>
           ) : (
