@@ -227,6 +227,48 @@ test.describe('visual editor', () => {
       .toMatch(/^(xs|sm|md|lg|xl|2xl)$/);
   });
 
+  test('symbols: make from selection, then insert another instance (#26)', async ({ page }) => {
+    const api = page.request;
+    const sites = (await (await api.get(`${BASE}/sites`)).json()) as Array<{ id: string }>;
+    const siteId = sites[0]!.id;
+    const pages = (await (await api.get(`${BASE}/sites/${siteId}/pages`)).json()) as Array<{ id: string }>;
+    const pageId = pages[0]!.id;
+    const full = (await (await api.get(`${BASE}/sites/${siteId}/pages/${pageId}`)).json()) as { tree: { id: string } };
+    await api.post(`${BASE}/sites/${siteId}/pages/${pageId}/tree/ops`, {
+      data: {
+        ops: [
+          {
+            op: 'insert',
+            parentId: full.tree.id,
+            node: { type: 'section', props: {}, layout: { direction: 'stack' }, children: [{ type: 'heading', props: { text: 'Promo', level: 2 } }] },
+          },
+        ],
+      },
+    });
+
+    await openEditor(page);
+    // Select the section and turn it into a symbol.
+    await page.locator('.outline-row', { hasText: 'section' }).last().click();
+    await page.getByTestId('symbol-create').click();
+
+    // A symbol chip appears (id derived from the node type: "section").
+    const chip = page.getByTestId('symbol-section');
+    await chip.waitFor({ state: 'visible' });
+
+    const countInstances = async () => {
+      const tree = ((await (await api.get(`${BASE}/sites/${siteId}/pages/${pageId}`)).json()) as {
+        tree: { children: Array<{ type: string }> };
+      }).tree.children;
+      return tree.filter((c) => c.type === 'symbolInstance').length;
+    };
+    // The selected section was replaced by one instance (lifted into the symbol).
+    await expect.poll(countInstances).toBe(1);
+
+    // Insert a second instance from the palette.
+    await chip.click();
+    await expect.poll(countInstances).toBe(2);
+  });
+
   test('submissions dialog lists captured form submissions', async ({ page }) => {
     const api = page.request;
     const sites = (await (await api.get(`${BASE}/sites`)).json()) as Array<{ id: string }>;

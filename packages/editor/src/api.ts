@@ -8,6 +8,7 @@ import type {
   PageSummary,
   Site,
   Submission,
+  SymbolSummary,
   TemplateInfo,
   Theme,
   TreeOp,
@@ -63,6 +64,11 @@ export const api = {
     req<Page>(`/sites/${siteId}/pages/${pageId}/tree`, { method: 'PUT', body: JSON.stringify(tree) }),
   listSubmissions: (siteId: string, formId?: string) =>
     req<Submission[]>(`/sites/${siteId}/submissions${formId ? `?formId=${encodeURIComponent(formId)}` : ''}`),
+  listSymbols: (siteId: string) => req<SymbolSummary[]>(`/sites/${siteId}/symbols`),
+  setSymbol: (siteId: string, symbolId: string, node: WbNode) =>
+    req<WbNode>(`/sites/${siteId}/symbols/${encodeURIComponent(symbolId)}`, { method: 'PUT', body: JSON.stringify(node) }),
+  deleteSymbol: (siteId: string, symbolId: string) =>
+    req<void>(`/sites/${siteId}/symbols/${encodeURIComponent(symbolId)}`, { method: 'DELETE' }),
   listComponents: () => req<ComponentSummary[]>('/components'),
   listBlocks: () => req<BlockSummary[]>('/blocks'),
   getBlock: (id: string) => req<Block>(`/blocks/${id}`),

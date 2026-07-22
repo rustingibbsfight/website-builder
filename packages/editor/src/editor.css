@@ -173,6 +173,9 @@ code { color: var(--accent); }
 .subs-table thead th { background: var(--surface-2, #1c2029); color: var(--muted); font-weight: 600; }
 .subs-table tr:last-child td { border-bottom: none; }
 .subs-when { color: var(--muted); }
+.wide-btn { width: 100%; padding: 6px 8px; margin-bottom: 8px; border: 1px solid var(--line, #2a2e39); border-radius: 5px; background: transparent; color: var(--ink, #e9e9f2); font-size: 12px; cursor: pointer; }
+.wide-btn:hover:not(:disabled) { border-color: var(--accent, #5b7fd7); }
+.wide-btn:disabled { opacity: .45; cursor: not-allowed; }
 .bp-switch { display: flex; gap: 4px; margin-bottom: 4px; }
 .bp-btn { flex: 1; padding: 5px 0; border: 1px solid var(--line, #2a2e39); border-radius: 5px; background: transparent; color: var(--muted); font-size: 11px; font-weight: 600; text-transform: capitalize; cursor: pointer; }
 .bp-btn.on { background: var(--accent, #5b7fd7); border-color: var(--accent, #5b7fd7); color: #fff; }
