@@ -286,6 +286,22 @@ describe('input validation hardening', () => {
     expect((await app.inject({ url: `/sites/${siteId}/assets` })).json()).toHaveLength(before);
   });
 
+  /**
+   * A page arrives whole. The create-then-PATCH shape this replaces could
+   * half-finish — a failed second call left a page with no meta description
+   * and nothing recording that one had been wanted.
+   */
+  it('creates a page with its meta in one request', async () => {
+    const siteId = await makeSite();
+    const res = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteId}/pages`,
+      payload: { slug: 'pricing', title: 'Pricing', meta: { description: 'What it costs.' } },
+    });
+    expect(res.statusCode).toBe(201);
+    expect((res.json() as { meta: { description?: string } }).meta.description).toBe('What it costs.');
+  });
+
   it('refuses a body that names neither bytes nor a url', async () => {
     const siteId = await makeSite();
     const res = await app.inject({

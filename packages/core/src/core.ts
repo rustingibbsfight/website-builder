@@ -20,6 +20,7 @@ import {
   newId,
   normalizeSlug,
   nowIso,
+  PageMetaSchema,
   SLUG_RE,
   ThemeSchema,
   validateTreeStructure,
@@ -542,7 +543,22 @@ export class WbCore {
 
   // ── Pages ────────────────────────────────────────────────────────────────
 
-  async addPage(siteId: string, slug: string, title: string, tree?: NodeInput): Promise<Page> {
+  /**
+   * Create a page, complete.
+   *
+   * `meta` is taken here rather than left to a follow-up PATCH. The two-call
+   * shape — create, then patch the description on — is one a caller can only
+   * half-finish: a failed second call leaves a page with no meta description
+   * and nothing recording that one was ever wanted. A page arrives whole or
+   * not at all.
+   */
+  async addPage(
+    siteId: string,
+    slug: string,
+    title: string,
+    tree?: NodeInput,
+    meta?: Partial<PageMeta>,
+  ): Promise<Page> {
     await this.getSite(siteId);
     const cleanSlug = normalizeSlug(slug);
     if (cleanSlug !== '' && !SLUG_RE.test(cleanSlug)) {
@@ -563,7 +579,7 @@ export class WbCore {
       siteId,
       slug: cleanSlug,
       title,
-      meta: {},
+      meta: meta ? PageMetaSchema.partial().parse(meta) : {},
       tree: fullTree,
       sortOrder: await this.pages.nextSortOrder(siteId),
       version: 0,

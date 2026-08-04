@@ -6,15 +6,19 @@ import { wbGet } from '../../lib/wb';
 /**
  * Read what people have sent through a site's contact forms.
  *
- * Nothing announces a submission — it is written to the database and waits. So
- * this is how anyone finds out one arrived, and asking is the only way it
- * happens. Worth offering when somebody asks after a site, rather than only
- * when they think to ask for it by name.
+ * A Slack alert and an email go out when the deployment is configured for
+ * them (PR #57), and best-effort: a failed notification is logged and
+ * swallowed so it can never cost the visitor their message. Both of those mean
+ * the same thing here — a notification is a nudge, and this is the record.
+ *
+ * So this stays the authoritative read, and asking is still the only way to be
+ * sure. Worth offering when somebody asks after a site, rather than only when
+ * they think to ask for it by name.
  */
 export default defineTool({
   description:
     "Read form submissions captured for a site (contact form messages). Newest first. Optionally filter to one form " +
-    "with formId. Nothing notifies anyone when a message arrives, so this is how they get seen.",
+    "with formId. Alerts are best-effort and may not be configured at all, so this is the authoritative read.",
   inputSchema: z.object({
     siteId: z.string(),
     formId: z.string().optional().describe('Only this form. Omit for every form on the site.'),

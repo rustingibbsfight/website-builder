@@ -341,12 +341,22 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
       schema: {
         params: SiteIdParams,
         body: z
-          .object({ slug: z.string(), title: z.string().min(1), tree: NodeInputSchema.optional() })
+          .object({
+            slug: z.string(),
+            title: z.string().min(1),
+            tree: NodeInputSchema.optional(),
+            // Taken at creation so a page arrives whole. The create-then-PATCH
+            // shape it replaces could half-finish, leaving a page with no meta
+            // description and nothing recording that one was wanted.
+            meta: PageMetaSchema.partial().optional(),
+          })
           .strict(),
       },
     },
     async (req, reply) =>
-      reply.status(201).send(await core.addPage(req.params.siteId, req.body.slug, req.body.title, req.body.tree)),
+      reply
+        .status(201)
+        .send(await core.addPage(req.params.siteId, req.body.slug, req.body.title, req.body.tree, req.body.meta)),
   );
 
   app.get('/sites/:siteId/pages', { schema: { params: SiteIdParams } }, async (req) =>
