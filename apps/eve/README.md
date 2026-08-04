@@ -17,6 +17,7 @@ agent/
   channels/slack.ts    # Slack channel (Vercel Connect credentials)
   channels/eve.ts      # HTTP/dev-REPL channel
 lib/wb.ts              # wb REST client (WB_API_URL + WB_API_TOKEN bearer)
+lib/studio.ts          # ComfyStudio image client (STUDIO_API_URL + STUDIO_API_KEY bearer)
 ```
 
 ## Setup
@@ -50,6 +51,27 @@ vercel env add WB_API_URL        # the wb API deployment, e.g. https://wb-api-�
 vercel env add WB_API_TOKEN      # the wb API's WB_API_TOKEN
 # optional: SLACK_CONNECT_UID    # if the Connect UID differs from slack/wb-eve
 ```
+
+### 4. ComfyStudio — original images (optional)
+
+`request_image` / `image_status` let Eve commission a picture from
+[ComfyStudio](https://github.com/rustingibbsfight/comfyui-personal), which runs
+ComfyUI workflows on Comfy Cloud. Eve describes what the *page* needs; the
+studio's own agent picks the workflow and writes the prompt.
+
+```bash
+vercel env add STUDIO_API_URL    # the ComfyStudio deployment, e.g. https://comfystudio-….vercel.app
+vercel env add STUDIO_API_KEY    # ComfyStudio → Settings → Agent access → Create a key (shown once)
+```
+
+The key holds `images:request` and nothing else, and carries its own daily
+render ceiling. Without both variables the two tools fail with a message naming
+the missing one; every other tool keeps working.
+
+Images come back as public URLs, which `add_asset` then ingests into the site.
+That path refuses private/internal hosts by design, so `STUDIO_API_URL` must be
+a real public deployment — a tunnel to localhost will fetch the ticket fine and
+then fail to ingest the picture.
 
 No Anthropic key and no Slack tokens: the model runs through Vercel's AI Gateway, and Slack credentials live in Vercel Connect.
 
