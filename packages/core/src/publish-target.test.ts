@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -51,10 +52,11 @@ describe('slugifyProject + projectNameFor + contentTypeFor', () => {
 });
 
 describe('VercelApiTarget', () => {
-  it('POSTs base64-inlined files to v13/deployments and returns the project URL', async () => {
+  it('uploads each file by digest, then POSTs a body that only references shas', async () => {
     const calls: Array<{ url: string; init: RequestInit }> = [];
     const fetchFn = (async (url: string | URL | Request, init?: RequestInit) => {
       calls.push({ url: String(url), init: init! });
+      if (String(url).includes('/v2/files')) return new Response(JSON.stringify({ urls: [] }), { status: 200 });
       // readyState READY on the POST → no follow-up polling.
       return new Response(
         JSON.stringify({ url: 'wb-my-clinic-s1-abc123.vercel.app', id: 'dpl_1', readyState: 'READY' }),
@@ -63,28 +65,84 @@ describe('VercelApiTarget', () => {
     }) as typeof fetch;
 
     const target = new VercelApiTarget({ token: 'tok', teamId: 'team_1', fetchFn });
+    const html = '<!doctype html><h1>Hi</h1>';
     const files = new Map<string, string | Uint8Array>([
-      ['index.html', '<!doctype html><h1>Hi</h1>'],
+      ['index.html', html],
       ['assets/logo.svg', new Uint8Array([60, 115, 118, 103, 62])],
     ]);
     const result = await target.deploy({ siteId: 's1', siteName: 'My Clinic', files });
 
-    expect(calls).toHaveLength(1); // POST only; already READY
-    expect(calls[0]!.url).toBe('https://api.vercel.com/v13/deployments?teamId=team_1');
-    const body = JSON.parse(calls[0]!.init.body as string) as {
+    const uploads = calls.filter((c) => c.url.includes('/v2/files'));
+    const deploys = calls.filter((c) => c.url.includes('/v13/deployments'));
+    expect(uploads).toHaveLength(2);
+    expect(deploys).toHaveLength(1);
+
+    // The digest is of the raw bytes, and the raw bytes are what's sent.
+    const htmlSha = createHash('sha1').update(Buffer.from(html)).digest('hex');
+    const htmlUpload = uploads.find((c) => (c.init.headers as Record<string, string>)['x-vercel-digest'] === htmlSha);
+    expect(htmlUpload).toBeDefined();
+    expect(htmlUpload!.url).toBe('https://api.vercel.com/v2/files?teamId=team_1');
+    expect((htmlUpload!.init.headers as Record<string, string>)['content-length']).toBe(String(html.length));
+    expect(Buffer.from(htmlUpload!.init.body as Uint8Array).toString()).toBe(html);
+
+    expect(deploys[0]!.url).toBe('https://api.vercel.com/v13/deployments?teamId=team_1');
+    const body = JSON.parse(deploys[0]!.init.body as string) as {
       name: string;
       target: string;
-      files: Array<{ file: string; data: string; encoding: string }>;
+      files: Array<{ file: string; sha: string; size: number; data?: string }>;
     };
     // Project name is discriminated by siteId so same-named sites can't collide.
     expect(body.name).toBe('wb-my-clinic-s1');
     expect(body.target).toBe('production');
     expect(body.files.map((f) => f.file).sort()).toEqual(['assets/logo.svg', 'index.html']);
-    expect(Buffer.from(body.files.find((f) => f.file === 'index.html')!.data, 'base64').toString()).toContain('Hi');
-    expect((calls[0]!.init.headers as Record<string, string>).authorization).toBe('Bearer tok');
+    const entry = body.files.find((f) => f.file === 'index.html')!;
+    expect(entry.sha).toBe(htmlSha);
+    expect(entry.size).toBe(html.length);
+    // The whole point: no bytes in the deployment body.
+    expect(entry.data).toBeUndefined();
+    expect((deploys[0]!.init.headers as Record<string, string>).authorization).toBe('Bearer tok');
 
     expect(result.url).toBe('https://wb-my-clinic-s1.vercel.app');
     expect(result.detail).toContain('live');
+  });
+
+  it('keeps the deployment body small no matter how heavy the site is', async () => {
+    // The regression: six generated hero images used to be base64-inlined into
+    // one POST, which Vercel rejects with "Request body too large. Limit: 10mb".
+    let deployBodyBytes = 0;
+    const fetchFn = (async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).includes('/v2/files')) return new Response('{}', { status: 200 });
+      deployBodyBytes = Buffer.byteLength(init!.body as string);
+      return new Response(JSON.stringify({ url: 'big.vercel.app', id: 'dpl_big', readyState: 'READY' }), {
+        status: 200,
+      });
+    }) as typeof fetch;
+
+    const files = new Map<string, string | Uint8Array>([['index.html', '<h1>x</h1>']]);
+    for (let i = 0; i < 6; i++) files.set(`assets/hero-${i}.png`, new Uint8Array(1_600_000).fill(i + 1));
+    const total = [...files.values()].reduce((n, v) => n + Buffer.from(v as Uint8Array).byteLength, 0);
+    expect(total).toBeGreaterThan(9_000_000); // base64 of this is ~12.8 MB — over the limit
+
+    const target = new VercelApiTarget({ token: 't', fetchFn });
+    await expect(target.deploy({ siteId: 's', siteName: 'Heavy', files })).resolves.toBeTruthy();
+    expect(deployBodyBytes).toBeLessThan(2_000);
+  });
+
+  it('fails the deploy when an upload cannot be completed, rather than shipping a missing image', async () => {
+    let attempts = 0;
+    const fetchFn = (async (url: string | URL | Request) => {
+      if (String(url).includes('/v2/files')) {
+        attempts++;
+        return new Response(JSON.stringify({ error: 'boom' }), { status: 500 });
+      }
+      return new Response(JSON.stringify({ url: 'x.vercel.app', id: 'd', readyState: 'READY' }), { status: 200 });
+    }) as typeof fetch;
+
+    const target = new VercelApiTarget({ token: 't', fetchFn });
+    await expect(
+      target.deploy({ siteId: 's', siteName: 'X', files: new Map([['index.html', 'x']]) }),
+    ).rejects.toThrow(/upload of "index\.html" failed/);
+    expect(attempts).toBe(2); // one retry, because the request is digest-addressed and idempotent
   });
 
   it('waits for the deployment to go READY before reporting success', async () => {
@@ -120,14 +178,24 @@ describe('VercelApiTarget', () => {
   });
 
   it('surfaces API errors readably, even with a non-JSON body', async () => {
-    const fetchFn = (async () =>
-      new Response(JSON.stringify({ error: { message: 'invalid token' } }), { status: 403 })) as unknown as typeof fetch;
+    // Uploads succeed; the deployment call is what refuses — so the message the
+    // caller sees is the deployment's, not a generic upload failure.
+    const ok = (url: string | URL | Request) => String(url).includes('/v2/files');
+    const fetchFn = (async (url: string | URL | Request) =>
+      ok(url)
+        ? new Response('{}', { status: 200 })
+        : new Response(JSON.stringify({ error: { message: 'invalid token' } }), {
+            status: 403,
+          })) as unknown as typeof fetch;
     const target = new VercelApiTarget({ token: 'bad', fetchFn });
     await expect(
       target.deploy({ siteId: 's', siteName: 'X', files: new Map([['index.html', 'x']]) }),
     ).rejects.toThrow(/403.*invalid token/);
 
-    const htmlFetch = (async () => new Response('<html>Gateway Timeout</html>', { status: 504 })) as unknown as typeof fetch;
+    const htmlFetch = (async (url: string | URL | Request) =>
+      ok(url)
+        ? new Response('{}', { status: 200 })
+        : new Response('<html>Gateway Timeout</html>', { status: 504 })) as unknown as typeof fetch;
     const t2 = new VercelApiTarget({ token: 'x', fetchFn: htmlFetch });
     await expect(
       t2.deploy({ siteId: 's', siteName: 'X', files: new Map([['index.html', 'x']]) }),

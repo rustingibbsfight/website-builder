@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import {
   DeleteObjectsCommand,
   ListObjectsV2Command,
@@ -107,6 +108,8 @@ export interface VercelApiTargetConfig {
   pollIntervalMs?: number;
   /** Max readiness polls before returning while-still-building. Default 45 (~90s). */
   maxPolls?: number;
+  /** Parallel file uploads. Default 8. */
+  uploadConcurrency?: number;
   /** Injectable for tests. */
   fetchFn?: typeof fetch;
 }
@@ -114,11 +117,25 @@ export interface VercelApiTargetConfig {
 const VERCEL_TERMINAL_STATES = new Set(['READY', 'ERROR', 'CANCELED']);
 
 /**
- * Deploys via the Vercel Deployments API (v13) with files inlined as base64 —
- * a single POST, no CLI. The project name is derived deterministically from
- * the site id (not just its name), so republishing updates the same project
- * (and its <project>.vercel.app domain / any custom domains attached to it)
- * while two same-named sites never clobber each other.
+ * Deploys via the Vercel Deployments API (v13), no CLI. The project name is
+ * derived deterministically from the site id (not just its name), so
+ * republishing updates the same project (and its <project>.vercel.app domain /
+ * any custom domains attached to it) while two same-named sites never clobber
+ * each other.
+ *
+ * Files are **uploaded first and referenced by digest**, not inlined as base64
+ * in the deployment body. Inlining is one fewer round trip and it works right
+ * up until it doesn't: the deployments endpoint caps a request body at 10 MB,
+ * base64 inflates bytes by a third, and a site with half a dozen generated
+ * hero images clears that without looking large. What came back was
+ * `400 Request body too large`, several layers below the person who had just
+ * asked for their site to go live.
+ *
+ * So every file goes to `/v2/files` keyed by the SHA-1 of its bytes, and the
+ * deployment body carries `{file, sha, size}` — a few hundred bytes whatever
+ * the site weighs. Deliberately not a size-triggered fallback: a second path
+ * taken only by unusually heavy sites is a path that is broken most of the time
+ * and nobody finds out until the day it is needed.
  */
 export class VercelApiTarget implements PublishTarget {
   readonly name = 'vercel-api';
@@ -138,15 +155,16 @@ export class VercelApiTarget implements PublishTarget {
 
   async deploy({ siteId, siteName, files }: { siteId: string; siteName: string; files: Map<string, string | Uint8Array> }) {
     const project = projectNameFor(siteName, siteId, this.cfg.projectPrefix ?? 'wb-');
+    const uploads = [...files].map(([file, data]) => {
+      const bytes = Buffer.from(data as Uint8Array);
+      return { file, bytes, sha: createHash('sha1').update(bytes).digest('hex'), size: bytes.byteLength };
+    });
+    await this.uploadFiles(uploads);
     const body = {
       name: project,
       target: 'production',
       projectSettings: { framework: null },
-      files: [...files].map(([file, data]) => ({
-        file,
-        data: Buffer.from(data as Uint8Array).toString('base64'),
-        encoding: 'base64',
-      })),
+      files: uploads.map(({ file, sha, size }) => ({ file, sha, size })),
     };
     const res = await this.fetchFn(`https://api.vercel.com/v13/deployments${this.query}`, {
       method: 'POST',
@@ -173,6 +191,55 @@ export class VercelApiTarget implements PublishTarget {
       url: `https://${project}.vercel.app`,
       detail: `deployment https://${url} ${status} on project "${project}"`,
     };
+  }
+
+  /**
+   * Put every file where the deployment can reference it by digest.
+   *
+   * Bounded concurrency rather than one `Promise.all` over the whole map: a
+   * site with a hundred files would otherwise open a hundred sockets from a
+   * serverless function and get itself rate-limited.
+   *
+   * A failure here is fatal to the deploy, and that is the point — a
+   * deployment that references a sha nobody uploaded builds into a site with a
+   * missing image, which is far worse than not deploying at all.
+   */
+  private async uploadFiles(uploads: ReadonlyArray<{ file: string; bytes: Buffer; sha: string; size: number }>): Promise<void> {
+    const limit = Math.min(this.cfg.uploadConcurrency ?? 8, uploads.length);
+    let next = 0;
+    await Promise.all(
+      Array.from({ length: limit }, async () => {
+        for (let i = next++; i < uploads.length; i = next++) await this.uploadFile(uploads[i]!);
+      }),
+    );
+  }
+
+  private async uploadFile(upload: { file: string; bytes: Buffer; sha: string; size: number }): Promise<void> {
+    // One retry, because a single dropped upload fails a deploy that is
+    // otherwise fine and the request is idempotent — it is addressed by the
+    // digest of its own bytes, so sending it twice cannot produce two things.
+    for (let attempt = 0; ; attempt++) {
+      let res: Awaited<ReturnType<typeof fetch>> | undefined;
+      try {
+        res = await this.fetchFn(`https://api.vercel.com/v2/files${this.query}`, {
+          method: 'POST',
+          headers: {
+            ...this.authHeaders,
+            'content-type': 'application/octet-stream',
+            'content-length': String(upload.size),
+            'x-vercel-digest': upload.sha,
+          },
+          body: new Uint8Array(upload.bytes),
+        });
+        if (res.ok) return;
+      } catch {
+        // Network blip — falls through to the retry/throw below.
+      }
+      if (attempt >= 1) {
+        const detail = res ? `${res.status}: ${(await readJsonSafe(res)).error ?? ''}`.trim() : 'network error';
+        throw new Error(`vercel upload of "${upload.file}" failed (${detail})`);
+      }
+    }
   }
 
   /** Poll the deployment until it reaches a terminal state or the budget runs out. */
