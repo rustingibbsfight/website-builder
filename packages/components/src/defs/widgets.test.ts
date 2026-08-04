@@ -129,6 +129,18 @@ describe('widget components', () => {
     expect(html).not.toMatch(/<script|\son[a-z]+=/i);
   });
 
+  it('contactForm captures submissions by default, without being asked to', () => {
+    // The old default rendered `<form method="POST">` with no action, which
+    // posts to the static page itself: 405, blank screen, message discarded.
+    const html = render(
+      'contactForm',
+      { fields: [{ name: 'email', label: 'Email', type: 'email' }] },
+      { siteId: 'site42', formEndpoint: 'https://api.example.com' },
+    );
+    expect(html).toContain('action="https://api.example.com/sites/site42/submissions/w123456789"');
+    expect(html).toContain('name="_hp"');
+  });
+
   it('contactForm store=true honours an explicit formId', () => {
     const html = render(
       'contactForm',

@@ -286,4 +286,49 @@ describe('lintPage', () => {
     expect(warnings.some((m) => m.includes('no meta description'))).toBe(true);
     expect(warnings.some((m) => m.includes('no alt text'))).toBe(true);
   });
+
+  describe('contact forms that post nowhere', () => {
+    const pageWith = (props: Record<string, unknown>): Page => ({
+      id: 'p1',
+      siteId: 's',
+      slug: 'contact',
+      title: 'Contact',
+      meta: { description: 'd' },
+      sortOrder: 0,
+      tree: {
+        id: 'r1',
+        type: 'page-root',
+        props: {},
+        children: [
+          { id: 'h1', type: 'heading', props: { level: 1, text: 'Contact' } },
+          { id: 'form1', type: 'contactForm', props },
+        ],
+      },
+    });
+    const warn = (props: Record<string, unknown>, over: Partial<Site> = {}) =>
+      lintPage(site(over), pageWith(props)).map((w) => w.message);
+
+    it('warns when a form has no action, no netlify, and no wb storage', () => {
+      // The default props: it renders `<form method="POST">`, which posts to the
+      // static page itself and is discovered by whoever filled it in.
+      const messages = warn({ store: false });
+      expect(messages.some((m) => m.includes('form1') && m.includes('nowhere to post'))).toBe(true);
+    });
+
+    it('warns when storage is on but the site has no formEndpoint', () => {
+      const messages = warn({ store: true });
+      expect(messages.some((m) => m.includes('formEndpoint'))).toBe(true);
+    });
+
+    it('is quiet when the form actually has somewhere to go', () => {
+      const endpoint = { settings: { locale: 'en', formEndpoint: 'https://wb-api-gold.vercel.app' } };
+      for (const [props, over] of [
+        [{ store: true }, endpoint],
+        [{ store: false, action: 'https://formspree.io/f/abc' }, {}],
+        [{ store: false, netlifyForms: true }, {}],
+      ] as Array<[Record<string, unknown>, Partial<Site>]>) {
+        expect(warn(props, over).some((m) => m.includes('form1')), JSON.stringify(props)).toBe(false);
+      }
+    });
+  });
 });

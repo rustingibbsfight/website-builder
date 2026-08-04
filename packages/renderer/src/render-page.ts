@@ -193,6 +193,22 @@ export function lintPage(site: Site, page: Page): LintWarning[] {
       const img = n.props.image as { alt?: string } | undefined;
       if (!img?.alt) warnings.push({ page: slug, message: `image node ${n.id} has no alt text` });
     }
+    // A form with nowhere to post is the worst kind of broken: it renders
+    // perfectly, and the only person who finds out is the one who filled it in
+    // and watched the browser POST to a static file. Mirrors the effective
+    // action `contactForm.render` computes — keep the two in step.
+    if (n.type === 'contactForm') {
+      const p = n.props as { store?: boolean; action?: string; netlifyForms?: boolean };
+      const storedHere = Boolean(p.store) && Boolean(site.settings.formEndpoint);
+      if (!storedHere && !p.action && !p.netlifyForms) {
+        warnings.push({
+          page: slug,
+          message: p.store
+            ? `form ${n.id} stores submissions in wb but the site has no formEndpoint setting — submissions go nowhere (set settings.formEndpoint to the wb API base URL)`
+            : `form ${n.id} has nowhere to post — submissions go nowhere (set store:true with the site's formEndpoint, or give it an action URL)`,
+        });
+      }
+    }
   });
   if (h1Count === 0) warnings.push({ page: slug, message: 'page has no h1 (add a hero or a level-1 heading)' });
   if (h1Count > 1) warnings.push({ page: slug, message: `page has ${h1Count} h1 elements (keep exactly one)` });

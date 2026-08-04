@@ -120,6 +120,13 @@ export interface WbCoreOptions {
   publishTarget?: PublishTarget | null;
   /** Version control for published sites. Defaults to env selection (WB_VCS). */
   versionControl?: VersionControl | null;
+  /**
+   * Public base URL of this API, used as the default `settings.formEndpoint` for
+   * new sites (env: WB_PUBLIC_URL). A published site is served from a static
+   * host on another origin, so a form has to post to an absolute URL — and a
+   * form that has to be told that URL by hand is a form that ships without one.
+   */
+  publicUrl?: string;
 }
 
 export interface DeploySiteResult {
@@ -149,6 +156,7 @@ export class WbCore {
     private publishTarget: PublishTarget | null,
     private versionControl: VersionControl | null,
     dataDir: string,
+    private publicUrl?: string,
   ) {
     this.dataDir = dataDir;
     this.sites = new SiteStore(db);
@@ -164,7 +172,8 @@ export class WbCore {
     const storage = opts.assetStorage ?? createAssetStorage(opts.dataDir);
     const publishTarget = opts.publishTarget !== undefined ? opts.publishTarget : createPublishTarget();
     const versionControl = opts.versionControl !== undefined ? opts.versionControl : createVersionControl();
-    return new WbCore(db, storage, publishTarget, versionControl, opts.dataDir);
+    const publicUrl = (opts.publicUrl ?? process.env.WB_PUBLIC_URL ?? '').replace(/\/$/, '') || undefined;
+    return new WbCore(db, storage, publishTarget, versionControl, opts.dataDir, publicUrl);
   }
 
   hasPublishTarget(): boolean {
@@ -252,7 +261,13 @@ export class WbCore {
       ...(input.symbols
         ? { symbols: Object.fromEntries(Object.entries(input.symbols).map(([k, v]) => [k, remap(v)])) }
         : {}),
-      settings: { locale: 'en', ...input.settings },
+      // Same formEndpoint seed as createSite — a template's own setting wins,
+      // and an import that carried one keeps it.
+      settings: {
+        locale: 'en',
+        ...(this.publicUrl ? { formEndpoint: this.publicUrl } : {}),
+        ...input.settings,
+      },
       createdAt: now,
       updatedAt: now,
     };
@@ -346,7 +361,10 @@ export class WbCore {
       id: newId(),
       name,
       theme: fullTheme,
-      settings: { locale: 'en' },
+      // formEndpoint is seeded from this API's own public URL so a contact form
+      // works the moment it is added. It is still overridable per site, and
+      // absent entirely when the API doesn't know its own address.
+      settings: { locale: 'en', ...(this.publicUrl ? { formEndpoint: this.publicUrl } : {}) },
       createdAt: now,
       updatedAt: now,
     };

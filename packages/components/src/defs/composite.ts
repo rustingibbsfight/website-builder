@@ -260,7 +260,7 @@ const contactFormProps = z
     netlifyForms: z.boolean().default(false).describe('Add the data-netlify attribute for Netlify Forms'),
     store: z
       .boolean()
-      .default(false)
+      .default(true)
       .describe('Capture submissions in wb (posts to the wb-api submissions endpoint; adds a spam honeypot). Requires the site\'s formEndpoint setting.'),
     formId: z
       .string()
@@ -286,7 +286,11 @@ export const contactForm: ComponentDef<z.infer<typeof contactFormProps>> = {
     ],
     submitLabel: 'Send message',
     netlifyForms: false,
-    store: false,
+    // On by default. The previous default rendered `<form method="POST">` with
+    // no action, which posts to the static page itself — a 405 and a blank
+    // screen for whoever filled it in, and the message thrown away. A form that
+    // silently discards what people type is worse than no form at all.
+    store: true,
   },
   render: (node, props, ctx) => {
     const fields = props.fields

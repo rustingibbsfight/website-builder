@@ -29,6 +29,27 @@ describe('WbCore sites & pages', () => {
     expect(pages[0]!.tree.type).toBe('page-root');
   });
 
+  it('seeds formEndpoint from the API\'s own public URL so contact forms work on arrival', async () => {
+    // A published site is served from a static host on another origin, so a
+    // form has to post to an absolute URL. Left to be set by hand, it isn't.
+    const dir = mkdtempSync(join(tmpdir(), 'wb-pub-'));
+    const withUrl = await WbCore.create({ dataDir: dir, publicUrl: 'https://wb-api-gold.vercel.app/' });
+    try {
+      const blank = await withUrl.createSite('Clinic');
+      expect(blank.settings.formEndpoint).toBe('https://wb-api-gold.vercel.app'); // trailing slash trimmed
+
+      const templated = await withUrl.createSiteFromTemplate('breakthrough-medical', 'From Template');
+      expect(templated.settings.formEndpoint).toBe('https://wb-api-gold.vercel.app');
+    } finally {
+      withUrl.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+
+    // Unset: no endpoint invented, and the renderer's lint is what says so.
+    const site = await core.createSite('No Public URL');
+    expect(site.settings.formEndpoint).toBeUndefined();
+  });
+
   it('applies ops with registry validation and structured errors', async () => {
     const site = await core.createSite('Ops Site');
     const page = (await core.listPages(site.id))[0]!;
