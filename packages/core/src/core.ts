@@ -173,6 +173,7 @@ export class WbCore {
     const publishTarget = opts.publishTarget !== undefined ? opts.publishTarget : createPublishTarget();
     const versionControl = opts.versionControl !== undefined ? opts.versionControl : createVersionControl();
     const publicUrl = (opts.publicUrl ?? process.env.WB_PUBLIC_URL ?? '').replace(/\/$/, '') || undefined;
+    if (publicUrl) await backfillFormEndpoint(db, publicUrl);
     return new WbCore(db, storage, publishTarget, versionControl, opts.dataDir, publicUrl);
   }
 
@@ -901,6 +902,43 @@ export class WbCore {
 }
 
 /** Rewrite links in preview so navigation stays inside the preview prefix. Never published. */
+/**
+ * Give sites created before `formEndpoint` was seeded somewhere to post.
+ *
+ * Those sites render `<form method="POST">` with no action, which posts to the
+ * static page itself — 405, a blank screen, and the message discarded. They
+ * cannot fix themselves: the setting is per-site data, so no amount of
+ * redeploying the code reaches them.
+ *
+ * Run **once per database**, recorded in `_wb_meta`, rather than idempotently
+ * on every startup. Re-running would look harmless and would quietly undo a
+ * deliberate `formEndpoint: null` on the next cold start, which is the kind of
+ * setting that only gets cleared on purpose.
+ *
+ * Only sites that have no endpoint at all are touched.
+ */
+async function backfillFormEndpoint(db: Client, publicUrl: string): Promise<void> {
+  const key = 'form_endpoint_backfill';
+  const done = await db.execute({ sql: 'SELECT value FROM _wb_meta WHERE key = ?', args: [key] });
+  if (done.rows.length) return;
+  await db.batch(
+    [
+      {
+        sql: `UPDATE sites
+              SET settings_json = json_set(COALESCE(settings_json, '{}'), '$.formEndpoint', ?)
+              WHERE json_extract(COALESCE(settings_json, '{}'), '$.formEndpoint') IS NULL`,
+        args: [publicUrl],
+      },
+      {
+        sql: `INSERT INTO _wb_meta (key, value) VALUES (?, ?)
+              ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+        args: [key, publicUrl],
+      },
+    ],
+    'write',
+  );
+}
+
 function previewNavScript(basePath: string, nonce: string): string {
   return `<script nonce="${nonce}">document.addEventListener('click',function(e){var a=e.target.closest('a[href^="/"]');if(!a)return;var p=a.getAttribute('href');if(p.indexOf(${JSON.stringify(basePath)})===0)return;e.preventDefault();location.href=${JSON.stringify(basePath)}+(p==='/'?'/':p)});</script>`;
 }
