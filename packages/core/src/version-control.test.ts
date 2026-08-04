@@ -41,6 +41,70 @@ function fakeGitHub(opts: { repoExists?: boolean } = {}) {
 }
 
 describe('GitHubVersionControl', () => {
+  it('keeps tree entries aligned with their blobs when uploads finish out of order', async () => {
+    // Uploads run concurrently, so the first blob to come back is not the first
+    // file. A tree built by pushing whatever finished would attach the wrong
+    // sha to a path — a commit that looks fine and has the images swapped.
+    const shaFor = new Map<string, string>();
+    const fetchFn = (async (url: string | URL | Request, init?: RequestInit) => {
+      const u = new URL(String(url));
+      const method = init?.method ?? 'GET';
+      const body = init?.body ? JSON.parse(init.body as string) : undefined;
+      const json = (status: number, data: unknown) => new Response(JSON.stringify(data), { status });
+
+      if (u.pathname.match(/^\/repos\/[^/]+\/[^/]+$/) && method === 'GET') return json(200, { name: 'r' });
+      if (u.pathname.match(/\/git\/ref\/heads\//)) return json(200, { object: { sha: 'p1' } });
+      if (u.pathname.endsWith('/git/blobs')) {
+        const sha = `blob_of_${Buffer.from(body.content, body.encoding === 'base64' ? 'base64' : 'utf8')}`;
+        shaFor.set(sha, sha);
+        // Later files answer sooner, so completion order is the reverse of input.
+        await new Promise((r) => setTimeout(r, Math.max(0, 30 - shaFor.size * 5)));
+        return json(201, { sha });
+      }
+      if (u.pathname.endsWith('/git/trees')) return json(201, { sha: 'tree_1' });
+      if (u.pathname.endsWith('/git/commits')) return json(201, { sha: 'c1', html_url: 'https://gh/c1' });
+      if (u.pathname.match(/\/git\/refs\/heads\//) && method === 'PATCH') return json(200, {});
+      return json(500, { message: 'unexpected' });
+    }) as unknown as typeof fetch;
+
+    let treeBody: { tree: Array<{ path: string; sha: string }> } | undefined;
+    const spy = (async (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).endsWith('/git/trees')) treeBody = JSON.parse(init!.body as string);
+      return fetchFn(url, init);
+    }) as unknown as typeof fetch;
+
+    const vc = new GitHubVersionControl({ token: 't', owner: 'o', fetchFn: spy });
+    const files = new Map<string, string | Uint8Array>([
+      ['a.html', 'AAA'],
+      ['b.html', 'BBB'],
+      ['c.html', 'CCC'],
+      ['d.html', 'DDD'],
+    ]);
+    await vc.commitSite({ siteId: 's', siteName: 'X', source: {}, files, message: 'm' });
+
+    for (const [path, content] of files) {
+      const entry = treeBody!.tree.find((t) => t.path === `dist/${path}`)!;
+      expect(entry.sha, path).toBe(`blob_of_${content}`);
+    }
+  });
+
+  it("reports GitHub's reason when a blob is rejected, not just a status code", async () => {
+    const fetchFn = (async (url: string | URL | Request, init?: RequestInit) => {
+      const u = new URL(String(url));
+      const method = init?.method ?? 'GET';
+      const json = (status: number, data: unknown) => new Response(JSON.stringify(data), { status });
+      if (u.pathname.match(/^\/repos\/[^/]+\/[^/]+$/) && method === 'GET') return json(200, { name: 'r' });
+      if (u.pathname.match(/\/git\/ref\/heads\//)) return json(200, { object: { sha: 'p1' } });
+      if (u.pathname.endsWith('/git/blobs')) return json(422, { message: 'blob is too large' });
+      return json(500, { message: 'unexpected' });
+    }) as unknown as typeof fetch;
+
+    const vc = new GitHubVersionControl({ token: 't', owner: 'o', fetchFn });
+    await expect(
+      vc.commitSite({ siteId: 's', siteName: 'X', source: {}, files: new Map([['big.png', 'x']]), message: 'm' }),
+    ).rejects.toThrow(/blob is too large/);
+  });
+
   it('creates the repo then commits source + build via the git data API (empty repo)', async () => {
     const gh = fakeGitHub({ repoExists: false });
     const vc = new GitHubVersionControl({ token: 't', owner: 'clinicowner', fetchFn: gh.fetchFn });
