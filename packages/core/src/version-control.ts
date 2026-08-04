@@ -36,6 +36,8 @@ export interface GitHubVersionControlConfig {
   branch?: string;
   /** Create new repos as private (default true). */
   private?: boolean;
+  /** Parallel blob uploads per commit. Default 6. */
+  blobConcurrency?: number;
   fetchFn?: typeof fetch;
 }
 
@@ -175,15 +177,39 @@ export class GitHubVersionControl implements VersionControl {
 
     // Blobs, then a fresh tree (no base_tree → each commit is a clean snapshot;
     // deleted pages and the .wb-init placeholder don't linger).
-    const tree: Array<{ path: string; mode: '100644'; type: 'blob'; sha: string }> = [];
-    for (const b of blobs) {
-      const blob = await this.gh<{ sha: string }>('POST', `/repos/${owner}/${repo}/git/blobs`, {
-        content: b.content,
-        encoding: b.encoding,
-      });
-      if (!blob.data.sha) throw new Error(`github: blob create failed for ${b.path} (${blob.status})`);
-      tree.push({ path: b.path, mode: '100644', type: 'blob', sha: blob.data.sha });
-    }
+    //
+    // Uploaded with bounded concurrency, not one at a time. A site with a
+    // handful of generated images is twenty round trips carrying a couple of
+    // megabytes each, and serialising them put the whole commit within reach of
+    // the API's 60s function ceiling — a limit nothing here could report
+    // usefully, because the function is killed rather than answered.
+    //
+    // Order is preserved by writing into a pre-sized array rather than pushing:
+    // the tree must list the paths the blobs were built from, and "whichever
+    // upload finished first" is not that.
+    const tree = new Array<{ path: string; mode: '100644'; type: 'blob'; sha: string }>(blobs.length);
+    const limit = Math.min(this.cfg.blobConcurrency ?? 6, blobs.length);
+    let next = 0;
+    await Promise.all(
+      Array.from({ length: limit }, async () => {
+        for (let i = next++; i < blobs.length; i = next++) {
+          const b = blobs[i]!;
+          const blob = await this.gh<{ sha: string }>('POST', `/repos/${owner}/${repo}/git/blobs`, {
+            content: b.content,
+            encoding: b.encoding,
+          });
+          // GitHub says *why* in `message` ("over the limit", a rate-limit note,
+          // a permissions problem). Dropping it — as this did — leaves a bare
+          // status code, which is how a one-line fix turns into an afternoon.
+          if (!blob.data.sha) {
+            throw new Error(
+              `github: blob create failed for ${b.path} (${blob.status})${blob.message ? `: ${blob.message}` : ''}`,
+            );
+          }
+          tree[i] = { path: b.path, mode: '100644', type: 'blob', sha: blob.data.sha };
+        }
+      }),
+    );
 
     const treeRes = await this.gh<{ sha: string }>('POST', `/repos/${owner}/${repo}/git/trees`, { tree });
     if (!treeRes.data.sha) throw new Error(`github: tree create failed (${treeRes.status})${treeRes.message ? `: ${treeRes.message}` : ''}`);
