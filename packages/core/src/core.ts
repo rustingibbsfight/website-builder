@@ -37,6 +37,13 @@ import {
 } from '@wb/schema';
 import { buildBreakthroughMedical, TEMPLATE_META, type BrandOverrides } from '@wb/template-breakthrough-medical';
 import { STARTER_TEMPLATES } from './starter-templates.js';
+import {
+  assertPublicUrl,
+  fetchCapped,
+  resolveMime,
+  MAX_ASSET_BYTES,
+  type FetchAssetOptions,
+} from './fetch-asset.js';
 import type { Client } from '@libsql/client';
 import { createSubmissionNotifiers, notifyAll, type SubmissionNotifier } from './notify.js';
 import { randomBytes } from 'node:crypto';
@@ -675,6 +682,41 @@ export class WbCore {
     await this.assets.insert(asset);
     await this.touchSite(siteId);
     return asset;
+  }
+
+  /**
+   * Add an asset by naming where it lives rather than carrying its bytes.
+   *
+   * The one place a URL somebody else chose gets fetched. Callers that used to
+   * do this themselves — the MCP tool, Eve's tool — now say the address and
+   * let the server do the reaching, which is what keeps the SSRF guard and the
+   * size cap to a single implementation. `fetchAsset` refuses first and reads
+   * second; nothing is written if it throws.
+   */
+  async addAssetFromUrl(
+    siteId: string,
+    filename: string,
+    url: string,
+    options: FetchAssetOptions = {},
+  ): Promise<Asset> {
+    // Order matters, and both halves of it were got wrong once.
+    //
+    // The guard runs *first*, because "you pointed me at the metadata service"
+    // is the answer that matters and a missing site must not mask it — a
+    // caller probing internal addresses should not be able to hide the
+    // refusal behind a typo in the site id.
+    //
+    // The site check runs *second*, before the fetch, so a bad site id does
+    // not spend a request on a stranger's server and pull 20 MB into memory
+    // for something that was never going to be stored.
+    //
+    // Composed here rather than calling `fetchAsset`, which would re-run the
+    // guard: a second DNS lookup is a second answer, and two answers is the
+    // rebinding window widened.
+    await assertPublicUrl(url, options);
+    await this.getSite(siteId);
+    const fetched = await fetchCapped(url, options.max ?? MAX_ASSET_BYTES, options);
+    return this.addAsset(siteId, filename, resolveMime(options.mime, fetched.mime, filename), fetched.bytes);
   }
 
   async listAssets(siteId: string): Promise<Asset[]> {
