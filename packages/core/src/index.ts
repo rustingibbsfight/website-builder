@@ -4,5 +4,6 @@ export * from './stores.js';
 export * from './storage.js';
 export * from './publish-target.js';
 export * from './version-control.js';
+export * from './notify.js';
 export { openDb, assetDir, distDir } from './db.js';
 export * from './deploy.js';

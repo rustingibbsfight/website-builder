@@ -140,7 +140,14 @@ A typical agent session: `create_site {template: "breakthrough-medical", brand: 
 
 **Version control:** set `WB_VCS=github` + `WB_GITHUB_TOKEN` + `WB_GITHUB_OWNER` and every deploy also commits the site's source (`site.json`) and rendered `dist/` to a per-site repo (`wb-site-<name>`). Republishes stack up as commit history — diffable and restorable. `POST /sites/:id/commit` (or Eve's `commit_site`) makes a snapshot without deploying. Commits use the GitHub API (no git binary), so it works from serverless; a commit failure never blocks a live deploy.
 
-Contact forms on static hosting need a form endpoint: set the form's `action` prop (e.g. Formspree) or `netlifyForms: true` on Netlify.
+**Contact forms.** A `contactForm` captures submissions in wb by default: it posts to `POST /sites/:id/submissions/:formId` (public, honeypot + rate-limited), stores the fields, and answers the visitor with a zero-JS thank-you page. That needs the site's `settings.formEndpoint` — set `WB_PUBLIC_URL` to this API's own base URL and new sites get it automatically (existing ones are backfilled once on startup). To use something else instead, set the form's `action` prop (e.g. Formspree) or `netlifyForms: true` on Netlify.
+
+Read captured messages in the editor's **📥 Submissions** panel, via `GET /sites/:id/submissions`, with the MCP `list_submissions` tool, or by asking Eve.
+
+**Nothing announces a submission unless you configure it to** — a message otherwise waits until somebody looks. Both channels are optional and independent, and a failure in either is logged and never fails the capture:
+
+- `WB_NOTIFY_SLACK_WEBHOOK` — a Slack incoming-webhook URL. The channel is chosen when you create the webhook.
+- `RESEND_API_KEY` + `WB_NOTIFY_EMAIL_TO` (comma-separated) + `WB_NOTIFY_EMAIL_FROM` (a Resend-verified sender). Mail goes out as plain text, with the submitter's address as `Reply-To` when they left a valid one.
 
 ## The Breakthrough Medical template
 

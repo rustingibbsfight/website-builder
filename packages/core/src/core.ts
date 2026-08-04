@@ -38,6 +38,7 @@ import {
 import { buildBreakthroughMedical, TEMPLATE_META, type BrandOverrides } from '@wb/template-breakthrough-medical';
 import { STARTER_TEMPLATES } from './starter-templates.js';
 import type { Client } from '@libsql/client';
+import { createSubmissionNotifiers, notifyAll, type SubmissionNotifier } from './notify.js';
 import { randomBytes } from 'node:crypto';
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -127,6 +128,9 @@ export interface WbCoreOptions {
    * form that has to be told that URL by hand is a form that ships without one.
    */
   publicUrl?: string;
+  /** Where new submissions are announced. Defaults to env selection
+   *  (WB_NOTIFY_SLACK_WEBHOOK, RESEND_API_KEY + WB_NOTIFY_EMAIL_*). */
+  notifiers?: SubmissionNotifier[];
 }
 
 export interface DeploySiteResult {
@@ -157,6 +161,7 @@ export class WbCore {
     private versionControl: VersionControl | null,
     dataDir: string,
     private publicUrl?: string,
+    private notifiers: readonly SubmissionNotifier[] = [],
   ) {
     this.dataDir = dataDir;
     this.sites = new SiteStore(db);
@@ -174,7 +179,8 @@ export class WbCore {
     const versionControl = opts.versionControl !== undefined ? opts.versionControl : createVersionControl();
     const publicUrl = (opts.publicUrl ?? process.env.WB_PUBLIC_URL ?? '').replace(/\/$/, '') || undefined;
     if (publicUrl) await backfillFormEndpoint(db, publicUrl);
-    return new WbCore(db, storage, publishTarget, versionControl, opts.dataDir, publicUrl);
+    const notifiers = opts.notifiers ?? createSubmissionNotifiers();
+    return new WbCore(db, storage, publishTarget, versionControl, opts.dataDir, publicUrl, notifiers);
   }
 
   hasPublishTarget(): boolean {
@@ -419,7 +425,7 @@ export class WbCore {
   // ── Form submissions (see #27) ─────────────────────────────────────────────
   /** Store a captured form submission. Field validation happens at the edge. */
   async createSubmission(siteId: string, formId: string, data: Record<string, string>): Promise<SubmissionRecord> {
-    await this.getSite(siteId); // 404 if the site is gone
+    const site = await this.getSite(siteId); // 404 if the site is gone
     // Per-site cap so the public, unauthenticated endpoint can't be used to
     // exhaust storage. Generous for a real form; well below abuse volume.
     if ((await this.submissions.countForSite(siteId)) >= MAX_SUBMISSIONS_PER_SITE) {
@@ -427,6 +433,20 @@ export class WbCore {
     }
     const rec: SubmissionRecord = { id: newId(), siteId, formId, data, createdAt: nowIso() };
     await this.submissions.insert(rec);
+
+    // Tell somebody. Awaited rather than fired and forgotten, because a
+    // serverless function is frozen the moment it responds and a dangling
+    // promise there is a notification that silently never happens. `notifyAll`
+    // swallows and logs its own failures, so this cannot fail a submission that
+    // is already safely stored.
+    await notifyAll(this.notifiers, {
+      siteId,
+      siteName: site.name,
+      formId,
+      data,
+      createdAt: rec.createdAt,
+      ...(this.publicUrl ? { reviewUrl: `${this.publicUrl}/editor/` } : {}),
+    });
     return rec;
   }
 
