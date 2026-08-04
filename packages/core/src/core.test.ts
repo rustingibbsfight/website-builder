@@ -50,6 +50,36 @@ describe('WbCore sites & pages', () => {
     expect(site.settings.formEndpoint).toBeUndefined();
   });
 
+  it('backfills formEndpoint onto sites that predate it, once, without clobbering a set one', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wb-backfill-'));
+    try {
+      // A database from before the seeding existed: two sites, no endpoints.
+      const before = await WbCore.create({ dataDir: dir });
+      const stale = await before.createSite('Old Clinic');
+      const custom = await before.createSite('Own Handler');
+      await before.updateSite(custom.id, { settings: { formEndpoint: 'https://forms.example.com' } });
+      expect((await before.getSite(stale.id)).settings.formEndpoint).toBeUndefined();
+      before.close();
+
+      // Reopening with a public URL configured fixes the one that had none.
+      const after = await WbCore.create({ dataDir: dir, publicUrl: 'https://wb-api-gold.vercel.app' });
+      expect((await after.getSite(stale.id)).settings.formEndpoint).toBe('https://wb-api-gold.vercel.app');
+      // A site that already pointed somewhere is left alone.
+      expect((await after.getSite(custom.id)).settings.formEndpoint).toBe('https://forms.example.com');
+      after.close();
+
+      // Runs once: clearing an endpoint on purpose must survive the next start.
+      const third = await WbCore.create({ dataDir: dir, publicUrl: 'https://wb-api-gold.vercel.app' });
+      await third.updateSite(stale.id, { settings: { formEndpoint: undefined } });
+      third.close();
+      const fourth = await WbCore.create({ dataDir: dir, publicUrl: 'https://wb-api-gold.vercel.app' });
+      expect((await fourth.getSite(stale.id)).settings.formEndpoint).toBeUndefined();
+      fourth.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('applies ops with registry validation and structured errors', async () => {
     const site = await core.createSite('Ops Site');
     const page = (await core.listPages(site.id))[0]!;
