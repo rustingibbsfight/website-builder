@@ -181,6 +181,32 @@ export interface LintWarning {
   message: string;
 }
 
+interface FormProps {
+  store?: boolean;
+  action?: string;
+  netlifyForms?: boolean;
+}
+
+/**
+ * A form node's props as the renderer will see them.
+ *
+ * Parsing is what applies the schema defaults, and `store` defaults to on — so
+ * reading `node.props` directly answers a different question from the one
+ * `contactForm.render` asks a moment later.
+ *
+ * The fallback is not tidiness. `parseProps` throws on props that do not
+ * validate, and a lint pass is not allowed to be the thing that takes a publish
+ * down: a warning is never an error here, and a node that got past validation
+ * by some other route should produce a *worse* warning, not a 500.
+ */
+function formProps(node: WbNode): FormProps {
+  try {
+    return parseProps(node.type, node.props) as FormProps;
+  } catch {
+    return node.props as FormProps;
+  }
+}
+
 /** Publish-time lint: SEO/accessibility warnings (never errors). */
 export function lintPage(site: Site, page: Page): LintWarning[] {
   const warnings: LintWarning[] = [];
@@ -198,7 +224,21 @@ export function lintPage(site: Site, page: Page): LintWarning[] {
     // and watched the browser POST to a static file. Mirrors the effective
     // action `contactForm.render` computes — keep the two in step.
     if (n.type === 'contactForm') {
-      const p = n.props as { store?: boolean; action?: string; netlifyForms?: boolean };
+      /**
+       * `parseProps`, not `n.props`. The two are not the same node: `store`
+       * defaults to **on** in the schema, and `materializeNode` copies props
+       * verbatim, so a form authored without an explicit `store` — which is
+       * every contact page in every starter template — rendered with a working
+       * action and was warned about as going nowhere.
+       *
+       * The comment above already said to keep this in step with what
+       * `contactForm.render` computes. It was not: `render` is handed parsed
+       * props by `renderNodeHtml` and this read the raw ones. A linter that
+       * cries wolf on three of three templates is a linter whose output stops
+       * being read — and the real case, a form deliberately set `store: false`
+       * with no action, was wearing the same sentence.
+       */
+      const p = formProps(n);
       const storedHere = Boolean(p.store) && Boolean(site.settings.formEndpoint);
       if (!storedHere && !p.action && !p.netlifyForms) {
         warnings.push({

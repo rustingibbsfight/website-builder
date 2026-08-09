@@ -101,6 +101,68 @@ describe('assertPublicUrl', () => {
     expect(isPrivateIp('::ffff:127.0.0.1')).toBe(true);
     expect(isPrivateIp('::ffff:93.184.216.34')).toBe(false);
   });
+
+  /**
+   * Both edges of every range, and a public address just outside each.
+   *
+   * The list above proves the ranges are *reachable*; it says nothing about
+   * where they end, and every address in it sits comfortably inside its own
+   * range. A sweep found four separate assertions missing here, and one of them
+   * is a hole rather than an inconvenience: with `b <= 31` written `b < 31`,
+   * `172.31.0.0/16` — the default VPC range on AWS — reads as public, and the
+   * whole guard is a request away from the metadata service's neighbours.
+   *
+   * The over-refusals matter too, in the other direction. `(a === 192 && b ===
+   * 168)` written with `||` refuses every address starting 192, which is a
+   * large slice of the public internet including GitHub's, and the failure is
+   * "your image URL is internal" about a URL that plainly is not.
+   */
+  it('ends each private range exactly where the range does', () => {
+    const private_ = [
+      '10.0.0.0',
+      '10.255.255.255',
+      '127.0.0.1',
+      '169.254.0.0',
+      '169.254.255.255',
+      '172.16.0.0',
+      '172.31.255.255', // the AWS default VPC range — the one that must not slip
+      '192.168.0.0',
+      '192.168.255.255',
+      '224.0.0.0', // multicast and everything above it
+      '255.255.255.255',
+    ];
+    const public_ = [
+      '9.255.255.255',
+      '11.0.0.0',
+      '126.255.255.255',
+      '128.0.0.1',
+      '169.253.255.255',
+      '169.255.0.0',
+      '171.255.255.255',
+      '172.15.255.255',
+      '172.32.0.0',
+      '192.167.255.255',
+      '192.169.0.0',
+      '223.255.255.255',
+      '8.20.1.1', // second octet inside 16–31, which only means anything for 172
+      '169.1.2.3', // first octet 169, which only means anything beside 254
+      '192.30.253.113', // first octet 192, which only means anything beside 168
+    ];
+    for (const ip of private_) expect(isPrivateIp(ip), ip).toBe(true);
+    for (const ip of public_) expect(isPrivateIp(ip), ip).toBe(false);
+  });
+
+  it('lets a public address through the whole guard, not only the predicate', async () => {
+    // The predicate is one half; this is the wiring, and it is what a caller
+    // meets. `never` as the lookup proves a literal address is settled without
+    // a DNS round trip.
+    for (const ip of ['172.32.0.1', '192.30.253.113', '169.1.2.3']) {
+      await expect(
+        assertPublicUrl(`https://${ip}/logo.png`, { lookupFn: never as never }),
+        ip,
+      ).resolves.toBeUndefined();
+    }
+  });
 });
 
 describe('fetchCapped', () => {
@@ -143,6 +205,40 @@ describe('fetchCapped', () => {
         'content-length': '4',
       })) as never;
     await expect(fetchCapped('https://example.com/lies.png', 16, { fetchFn })).rejects.toThrow(/too large/i);
+  });
+
+  /**
+   * A cap is a limit, so the size *equal* to it is allowed and the next byte is
+   * not. Both halves were tested well over the line and neither at it, which is
+   * the direction that costs somebody a legitimate 20 MB upload with an error
+   * saying it is too large.
+   */
+  it('takes a body of exactly the cap, by the header and by the bytes', async () => {
+    const exact = (headers: Record<string, string> = {}) =>
+      (async () => streamed([new Uint8Array(8), new Uint8Array(8)], headers)) as never;
+
+    await expect(
+      fetchCapped('https://example.com/exact.png', 16, { fetchFn: exact({ 'content-length': '16' }) }),
+    ).resolves.toMatchObject({ bytes: expect.objectContaining({ length: 16 }) });
+
+    // No header at all, so only the streamed count can have decided it.
+    await expect(
+      fetchCapped('https://example.com/exact.png', 16, { fetchFn: exact() }),
+    ).resolves.toMatchObject({ bytes: expect.objectContaining({ length: 16 }) });
+  });
+
+  it('refuses the byte after the cap, by the header and by the bytes', async () => {
+    const overByOne = (headers: Record<string, string> = {}) =>
+      (async () => streamed([new Uint8Array(16), new Uint8Array(1)], headers)) as never;
+
+    await expect(
+      fetchCapped('https://example.com/over.png', 16, {
+        fetchFn: overByOne({ 'content-length': '17' }),
+      }),
+    ).rejects.toThrow(/too large/i);
+    await expect(
+      fetchCapped('https://example.com/over.png', 16, { fetchFn: overByOne() }),
+    ).rejects.toThrow(/too large/i);
   });
 
   it('surfaces a non-ok status rather than storing an error page as an image', async () => {

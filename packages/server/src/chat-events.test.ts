@@ -46,6 +46,47 @@ describe('a tool result is summarised, not relayed', () => {
     expect(events[0]).toMatchObject({ kind: 'tool', name: 'edit_page', summary: { ops: 3, page: 'pricing' } });
   });
 
+  it('keeps only the fields it can vouch for, and drops the summary with nothing left', () => {
+    /**
+     * Every field is copied under a `typeof` guard, and the guards had no test
+     * — the fixtures all held well-formed results. Inverted, the summary either
+     * loses a field it has or gains one it cannot describe, and either way what
+     * reaches a 360px panel is decided by whatever eve happened to return.
+     */
+    const summaryOf = (name: string, output: unknown) => {
+      const [event] = project(
+        line({ type: 'tool-output-available', name, state: 'output-available', output }),
+      ).events;
+      return (event as Extract<ChatEvent, { kind: 'tool' }>).summary;
+    };
+
+    expect(summaryOf('add_asset', { assetId: 'a1', alt: 'A lighthouse', images: [1, 2] })).toEqual({
+      assetId: 'a1',
+      alt: 'A lighthouse',
+      images: 2,
+    });
+    // Same tool, a result whose fields are the wrong shape: what it cannot
+    // vouch for is left out rather than stringified into the feed.
+    expect(summaryOf('add_asset', { assetId: 7, alt: { text: 'x' }, images: 'lots' })).toEqual({});
+
+    expect(summaryOf('deploy_site', { url: 'https://example.com' })).toEqual({
+      url: 'https://example.com',
+    });
+    expect(summaryOf('deploy_site', { url: null })).toBeUndefined();
+
+    expect(summaryOf('add_page', { slug: 'pricing' })).toEqual({ page: 'pricing' });
+    expect(summaryOf('add_page', { slug: 42 })).toBeUndefined();
+
+    /**
+     * Not an object at all. The early return is the only thing standing between
+     * a bare string or a `null` and code that reads fields off it, and `null`
+     * is the one that turns a missing guard into a thrown `TypeError` — which
+     * on this path is the whole panel rather than one lost event.
+     */
+    expect(summaryOf('edit_page', 'done')).toBeUndefined();
+    expect(summaryOf('edit_page', null)).toBeUndefined();
+  });
+
   it('says nothing at all about a tool it does not know', () => {
     // The safe default for a projection whose whole job is to not ship a tree.
     // A tool added to eve tomorrow gets a worse feed entry, not a 400 KB one.
@@ -86,6 +127,32 @@ describe('a stream that is cut mid-line', () => {
     expect(consumed).toBe(2);
   });
 
+  it('reads a bare `tool` event as well as the `tool-*` ones', () => {
+    // Two spellings arrive from different eve versions and the check is an
+    // `||` over both. Only the prefixed form was ever exercised, so the exact
+    // `tool` case — the older one, and the one a downgrade would produce —
+    // rested on nothing.
+    expect(project(line({ type: 'tool', name: 'edit_page', state: 'output-available' })).events).toEqual([
+      { kind: 'tool', name: 'edit_page', state: 'output-available' },
+    ]);
+    // A tool event with no name is not an event: there is nothing to draw and
+    // nothing to key a reload off.
+    expect(project(line({ type: 'tool', state: 'output-available' })).events).toEqual([]);
+  });
+
+  it('ends the turn on either spelling of the end', () => {
+    for (const type of ['finish', 'done']) {
+      expect(project(line({ type })).events, type).toEqual([{ kind: 'done' }]);
+    }
+  });
+
+  it('drops a line that is not an object at all', () => {
+    // `null` and a bare number are both valid JSON lines. Read as objects they
+    // throw, and a throw here is the whole panel rather than one lost event.
+    expect(project(`${line(null)}${line(42)}${line('hello')}`).events).toEqual([]);
+    expect(project(line(null)).consumed).toBe(1);
+  });
+
   it('drops an unknown event type rather than throwing', () => {
     // Eve is a dependency and will grow event types. Throwing here turns
     // somebody else's minor release into an outage in this app.
@@ -105,6 +172,38 @@ describe('what the editor has to refetch', () => {
       line({ type: 'tool-output-available', name: 'edit_page', state: 'output-available', output: { slug: 'x' } }),
     );
     expect(changedBy(done.events).page).toBe(true);
+  });
+
+  it('reloads the right thing for every tool that changes one', () => {
+    /**
+     * One row per tool, because each axis is an `||` over two or three names
+     * and only the first name of the first axis was standing on anything. ANDed
+     * instead of ORed, every axis needs *both* tools in one turn to fire — so
+     * an agent that adds a page and stops leaves the outline showing the pages
+     * that existed before, and nothing on screen says the list is stale.
+     *
+     * The `false` half of each row matters as much: a tool that flips two axes
+     * is a canvas reload nobody asked for, on every turn.
+     */
+    const axes = { page: false, pages: false, theme: false, assets: false };
+    const cases: Array<[string, keyof typeof axes]> = [
+      ['edit_page', 'page'],
+      ['update_page', 'page'],
+      ['add_page', 'pages'],
+      ['delete_page', 'pages'],
+      ['set_theme', 'theme'],
+      ['update_site', 'theme'],
+      ['add_asset', 'assets'],
+      ['delete_asset', 'assets'],
+      ['request_image', 'assets'],
+    ];
+
+    for (const [name, axis] of cases) {
+      const done = project(
+        line({ type: 'tool-output-available', name, state: 'output-available', output: { slug: 'x' } }),
+      );
+      expect(changedBy(done.events), name).toEqual({ ...axes, [axis]: true });
+    }
   });
 
   it('does not reload the canvas for a tool that changed nothing', () => {

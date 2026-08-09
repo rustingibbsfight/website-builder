@@ -197,7 +197,11 @@ export function resolveMime(
 ): string {
   const fromResponse = responseMime && responseMime !== UNKNOWN_MIME ? responseMime : undefined;
   const guessed = filename ? guessMime(filename) : undefined;
-  const fromFilename = guessed && guessed !== UNKNOWN_MIME ? guessed : undefined;
+  // No `guessed &&` guard: `guessMime` answers either a real type or the
+  // fallback, never anything falsy, so the extra clause could not change the
+  // answer for any input — it was a mutant nothing could kill, which is what
+  // dead defensiveness looks like from a sweep.
+  const fromFilename = guessed !== UNKNOWN_MIME ? guessed : undefined;
   return callerMime ?? fromResponse ?? fromFilename ?? UNKNOWN_MIME;
 }
 

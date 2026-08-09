@@ -161,9 +161,38 @@ Four pages (home, services, about, contact) + shared header/footer, teal medical
 pnpm build     # typecheck + compile all packages
 pnpm test      # unit + integration tests (schema, components, renderer, core, server, cli, mcp, eve)
 pnpm e2e       # Playwright: real browser at desktop/tablet/mobile viewports
+pnpm mutate <file>   # mutation sweep over one module (see below)
 ```
 
-~150 unit/integration tests plus 20 Playwright e2e specs, including dedicated adversarial/security suites per package.
+Unit/integration tests plus Playwright e2e specs, including dedicated
+adversarial/security suites per package.
+
+### Sweeping a module for the tests nobody wrote
+
+`scripts/mutate.mjs` applies one small mutation at a time across a file — a
+boundary slid one side, a comparison inverted, `&&` widened to `||`, a negation
+dropped — and reports the ones no test noticed. The narrow run is the owning
+package; every survivor is then re-confirmed against the whole workspace,
+because a module here is consumed by several packages and the test that pins a
+rule often lives one package away.
+
+Three things to know before trusting the output. **Two sweeps must not run at
+once** — the confirmation reads the whole tree, so the other sweep's mutant
+records every survivor here as killed, which is the direction that makes the
+tool say everything is fine. **A mutant that does not compile scores as a kill**,
+so the operator list is deliberately narrow. And a survivor is one of three
+things: an assertion nobody wrote (mostly boundaries), an equivalent mutant
+(annotate it), or **dead code** — a redundant clause that could not change any
+answer, which is how `resolveMime`'s `guessed &&` was found.
+
+The first sweep over the security-facing modules found, among others, that
+`172.31.0.0/16` — the default AWS VPC range — would have read as public with the
+SSRF guard's upper bound off by one, and that the session cookie's `Secure` flag
+had nothing standing on it at all.
+
+**Still unswept**, and recorded here rather than left to look finished:
+`packages/core/src/version-control.ts` (10 survivors, GitHub API plumbing) and
+`packages/core/src/notify.ts` (3).
 
 ## Security model
 
