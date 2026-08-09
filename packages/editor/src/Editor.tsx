@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from './api';
+import { ChatPanel } from './ChatPanel';
 import { Inspector } from './Inspector';
 import { BlocksPanel, OutlineTree, Palette, PagesPanel, SymbolsPanel } from './panels';
 import { SeoDialog } from './SeoDialog';
 import { SubmissionsDialog } from './SubmissionsDialog';
 import { ThemeDialog } from './ThemeDialog';
 import { collectContainerIds, findNode, findParent, stripIds } from './tree-utils';
-import type { BlockSummary, ComponentSummary, Page, PageSummary, Site, SymbolSummary, TreeOp, WbNode } from './types';
+import type { BlockSummary, ComponentSummary, Page, PageSummary, Site, SymbolSummary, TreeOp, WbNode, SiteChanged } from './types';
 
 const VIEWPORTS = { desktop: '100%', tablet: '834px', mobile: '390px' } as const;
 type Viewport = keyof typeof VIEWPORTS;
@@ -55,6 +56,17 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
   const [submissionsOpen, setSubmissionsOpen] = useState(false);
   const [drag, setDrag] = useState<DragState | null>(null);
   const [frameKey, setFrameKey] = useState(0);
+  const [chatOpen, setChatOpen] = useState(false);
+  /**
+   * An inline edit in progress, so a reload can wait for it.
+   *
+   * Bumping `frameKey` re-mounts the iframe, which destroys whatever somebody
+   * is halfway through typing into the canvas. The editor already knows —
+   * `wb:edit-begin` and `wb:text-commit` come up from the frame — so an agent
+   * edit that lands mid-typing is *queued* rather than dropped or forced.
+   */
+  const editingRef = useRef(false);
+  const pendingReload = useRef<SiteChanged | null>(null);
 
   const undoStack = useRef<WbNode[]>([]);
   const redoStack = useRef<WbNode[]>([]);
@@ -143,6 +155,9 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
       if (d.type === 'wb:dblclick' && d.nodeId) {
         const node = pageRef.current ? findNode(pageRef.current.tree, d.nodeId) : null;
         setSelectedId(d.nodeId);
+        // From here until the commit, a canvas reload would destroy what is
+        // being typed. An agent edit that lands in this window waits.
+        editingRef.current = true;
         if (node && INLINE_TEXT_PROP[node.type]) {
           frameRef.current?.contentWindow?.postMessage(
             { type: 'wb:edit-begin', nodeId: d.nodeId },
@@ -158,6 +173,10 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
         }
       }
       if (d.type === 'wb:text-commit' && d.nodeId && typeof d.text === 'string') {
+        editingRef.current = false;
+        const queued = pendingReload.current;
+        pendingReload.current = null;
+        if (queued) void applyAgentChange(queued);
         const node = pageRef.current ? findNode(pageRef.current.tree, d.nodeId) : null;
         const prop = node ? (INLINE_TEXT_PROP[node.type] ?? RICH_TEXT_PROP[node.type]) : undefined;
         const current = node ? (node.props as Record<string, unknown>)[prop ?? ''] : undefined;
@@ -198,6 +217,68 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
     [page, pageId, siteId],
   );
   mutateRef.current = (ops: TreeOp[]) => void mutate(ops);
+
+  /**
+   * The agent changed the site; catch the editor up.
+   *
+   * **The undo stack is a record of this tab's history, and the page's history
+   * is no longer only this tab's.** That sentence is the whole of this
+   * function. `mutate` is the only path that writes, snapshots and bumps
+   * `frameKey`; an agent edit goes round all three, so without this the
+   * in-memory tree goes stale — a later `update` on a node the agent removed
+   * 422s — and ⌘Z restores a whole-tree snapshot from *before* the agent ran,
+   * silently wiping its work.
+   *
+   * So the tree that was on screen is pushed onto `undoStack` before the
+   * refetch, and `redoStack` is cleared. ⌘Z then undoes *the agent's* edit and
+   * the user's own history survives underneath it, which is what somebody
+   * pressing it expects.
+   *
+   * It **refetches** rather than applying anything the agent sent. One reload
+   * path, not two: mirroring ops into local state would be a second
+   * implementation of "what the tree is now" while the server has the answer,
+   * and it is why the transport summarises the tree out of the event at all.
+   *
+   * Queued behind an inline edit, because a `frameKey` bump re-mounts the
+   * iframe and destroys text somebody is mid-sentence in.
+   */
+  const applyAgentChange = useCallback(
+    async (changed: SiteChanged) => {
+      if (editingRef.current) {
+        // Merge rather than replace: two agent edits during one long inline
+        // edit must not lose the first one's refetch.
+        const queued = pendingReload.current;
+        pendingReload.current = queued
+          ? {
+              page: queued.page || changed.page,
+              pages: queued.pages || changed.pages,
+              theme: queued.theme || changed.theme,
+              assets: queued.assets || changed.assets,
+            }
+          : changed;
+        return;
+      }
+
+      try {
+        if (changed.page && pageId) {
+          const before = pageRef.current?.tree;
+          const updated = await api.getPage(siteId, pageId);
+          if (before) {
+            undoStack.current.push(before);
+            redoStack.current = [];
+          }
+          setPage(updated);
+        }
+        if (changed.pages) setPages(await api.listPages(siteId));
+        if (changed.theme) setSite(await api.getSite(siteId));
+        setFrameKey((k) => k + 1);
+        setStatus('Eve made a change');
+      } catch (err) {
+        setStatus(`error: ${(err as Error).message}`);
+      }
+    },
+    [pageId, siteId],
+  );
 
   const restoreTree = useCallback(
     async (tree: WbNode) => {
@@ -403,7 +484,7 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
   const previewPath = `/preview/${siteId}/${currentSlug ? `${currentSlug}/` : ''}`;
 
   return (
-    <div className="editor">
+    <div className={chatOpen ? 'editor chat-open' : 'editor'}>
       <header className="toolbar">
         <button type="button" className="ghost" onClick={onExit} title="All sites">
           ←
@@ -443,6 +524,15 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
           data-testid="submissions-open"
         >
           📥 Submissions
+        </button>
+        <button
+          type="button"
+          onClick={() => setChatOpen((open) => !open)}
+          title="Ask Eve to change this page"
+          aria-pressed={chatOpen}
+          data-testid="chat-open"
+        >
+          💬 Eve
         </button>
         <a href={previewPath} target="_blank" rel="noreferrer">
           👁 Preview
@@ -548,6 +638,16 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
           onMoveDown={() => moveSelected(1)}
         />
       </aside>
+
+      {chatOpen && (
+        <ChatPanel
+          siteId={siteId}
+          {...(pageId ? { pageId } : {})}
+          {...(selectedId ? { selectedNodeId: selectedId } : {})}
+          onSiteChanged={(changed) => void applyAgentChange(changed)}
+          onClose={() => setChatOpen(false)}
+        />
+      )}
 
       {themeOpen && (
         <ThemeDialog

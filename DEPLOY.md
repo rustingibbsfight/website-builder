@@ -71,3 +71,27 @@ vercel deploy --prod                     # from the repo root — NOT apps/wb-ap
 - Replace the placeholder address/phone/email on the contact page.
 - Wire the contact form's `action` to a real form endpoint (e.g. Formspree).
 - Swap the placeholder SVG art for real photography via `add_asset`.
+
+## The editor's chat with Eve
+
+The editor talks to `wb-api`, and `wb-api` talks to `wb-eve`. Eve's own HTTP
+channel stays closed to browsers — opening a second door into it for one caller
+is the kind of thing that ends up weaker than the first door — so two variables
+go on the **wb-api** project:
+
+```bash
+vercel env add WB_EVE_URL      # the wb-eve deployment, e.g. https://wb-eve-….vercel.app
+vercel env add WB_EVE_TOKEN    # optional; omit locally, where eve's localDev() opens the channel
+```
+
+`WB_EVE_TOKEN` is wb-api's own credential, deliberately not the browser's: a
+proxy that forwards a user credential onward is a confused deputy.
+
+Two things worth checking against the deployment before trusting the shape,
+because both are assumptions rather than measurements:
+
+- **That eve keeps a turn running after the caller drops the POST connection.**
+  The "202 and let go" design rests on it. It is documented true for ComfyStudio;
+  if it turns out false here the fallback is to hold the leg ~50s and let it drop.
+- **`apps/eve`'s `maxDuration`**, which is undeclared today — there is no
+  `vercel.json` in that app. It stops mattering once no tool blocks.

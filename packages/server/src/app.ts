@@ -11,6 +11,7 @@ import {
 } from '@wb/schema';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { registerAuth } from './auth.js';
+import { registerChat } from './chat.js';
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
@@ -84,6 +85,15 @@ export interface BuildAppOptions {
    * x-api-key, or the session cookie from POST /auth/login. Unset = open.
    */
   apiToken?: string;
+  /**
+   * The `fetch` the chat relay uses to reach eve.
+   *
+   * Injected so the routes are testable without an agent — the same shape
+   * `packages/core/src/notify.ts` already uses, and for the same reason: a
+   * transport whose only test is "it works against the real thing" has no test
+   * of what it does when the real thing is slow, absent, or a version ahead.
+   */
+  fetch?: typeof globalThis.fetch;
 }
 
 export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> {
@@ -160,6 +170,12 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   });
 
   app.get('/health', async () => ({ ok: true }));
+
+  // ── The editor's chat with Eve ────────────────────────────────────────────
+  // Registered here rather than defined inline: it is the one part of this
+  // file that talks to another service, and it is bounded by a timeout of its
+  // own so a slow agent cannot spend this route's whole budget.
+  await registerChat(app, core, { fetch: opts.fetch });
 
   // ── Components ───────────────────────────────────────────────────────────
   app.get('/components', async () => listComponents().map(componentSummary));

@@ -362,3 +362,50 @@ export class SubmissionStore {
     await this.db.execute({ sql: 'DELETE FROM submissions WHERE site_id=?', args: [siteId] });
   }
 }
+
+/**
+ * Which eve session holds the conversation about a site.
+ *
+ * One row per site, and that is the design rather than a schema convenience.
+ * The conversation about a site belongs to *the site*: a reload, a second tab
+ * and a different machine should all pick it up where it was left. Keeping the
+ * id in `localStorage` would have made it a browser's, which is the wrong owner
+ * for something eve already keeps durable history of — and it would have meant
+ * a cleared cache silently orphaning a conversation that still exists.
+ *
+ * Only the id is stored. The transcript stays eve's, read back from its own
+ * durable log by cursor, so there is no second copy of the conversation here to
+ * drift from the first.
+ */
+export class ChatSessionStore {
+  constructor(private db: Client) {}
+
+  async get(siteId: string): Promise<string | null> {
+    const rows = (
+      await this.db.execute({ sql: 'SELECT session_id FROM chat_sessions WHERE site_id=?', args: [siteId] })
+    ).rows;
+    return rows[0] ? str(rows[0].session_id) : null;
+  }
+
+  /**
+   * Remember it, or keep the one already there.
+   *
+   * `INSERT OR IGNORE` rather than an upsert: two tabs opening at once both
+   * post, both create a session, and the loser must *adopt the winner's* rather
+   * than overwrite it — otherwise the tab that lost has just detached a
+   * conversation the other tab is mid-turn in. The return value is the session
+   * that won, which the caller uses instead of its own.
+   */
+  async claim(siteId: string, sessionId: string, createdAt: string): Promise<string> {
+    await this.db.execute({
+      sql: `INSERT OR IGNORE INTO chat_sessions (site_id, session_id, created_at) VALUES (?, ?, ?)`,
+      args: [siteId, sessionId, createdAt],
+    });
+    return (await this.get(siteId)) ?? sessionId;
+  }
+
+  /** Start a fresh conversation about this site, forgetting the old id. */
+  async clear(siteId: string): Promise<void> {
+    await this.db.execute({ sql: 'DELETE FROM chat_sessions WHERE site_id=?', args: [siteId] });
+  }
+}
