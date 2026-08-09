@@ -113,3 +113,32 @@ export type TreeOp =
   | { op: 'move'; nodeId: string; parentId: string; index: number }
   | { op: 'remove'; nodeId: string }
   | { op: 'replace'; nodeId: string; node: Partial<WbNode> & { type: string } };
+
+/**
+ * One line of the agent's turn, as the transport projects it.
+ *
+ * Mirrors `packages/server/src/chat-events.ts`. A tool's *result* is
+ * deliberately absent: `edit_page` returns the whole page tree, and the panel
+ * neither needs it nor should hold it — the server is what knows the tree, and
+ * a client holding one will eventually be tempted to apply it.
+ */
+export type ChatEvent =
+  | { kind: 'text'; text: string }
+  | { kind: 'tool'; name: string; state: string; summary?: Record<string, unknown> }
+  | { kind: 'error'; message: string }
+  | { kind: 'done' };
+
+export interface ChatRead {
+  events: ChatEvent[];
+  nextIndex: number;
+  tailIndex?: number;
+  live: boolean;
+}
+
+/** What a finished turn touched, so the editor refetches exactly that. */
+export interface SiteChanged {
+  page: boolean;
+  pages: boolean;
+  theme: boolean;
+  assets: boolean;
+}

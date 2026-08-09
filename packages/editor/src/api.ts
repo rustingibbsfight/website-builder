@@ -1,6 +1,7 @@
 import type {
   Block,
   BlockSummary,
+  ChatRead,
   ComponentDetail,
   ComponentSummary,
   Page,
@@ -75,6 +76,15 @@ export const api = {
   getComponent: (type: string) => req<ComponentDetail>(`/components/${type}`),
   setTheme: (siteId: string, patch: Partial<Theme>) =>
     req<Theme>(`/sites/${siteId}/theme`, { method: 'PUT', body: JSON.stringify(patch) }),
+  sendChat: (siteId: string, body: { message: string; pageId?: string; selectedNodeId?: string }) =>
+    req<{ sessionId: string; live: boolean }>(`/sites/${siteId}/chat`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  // `since` is the cursor, and it only ever moves forward — it is what makes a
+  // reload replay the transcript rather than start it again.
+  pollChat: (siteId: string, since: number) => req<ChatRead>(`/sites/${siteId}/chat?since=${since}`),
+  resetChat: (siteId: string) => req<void>(`/sites/${siteId}/chat`, { method: 'DELETE' }),
   publish: (siteId: string) =>
     req<{ distPath: string; pageCount: number; warnings: Array<{ page: string; message: string }> }>(
       `/sites/${siteId}/publish`,
