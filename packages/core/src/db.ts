@@ -69,6 +69,17 @@ const MIGRATIONS: string[][] = [
     )`,
     `CREATE INDEX IF NOT EXISTS idx_submissions_site ON submissions(site_id, created_at)`,
   ],
+  // v3 — the editor's chat with Eve. One row per site: the conversation about a
+  // site is *the site's*, not a tab's, so a reload, a second tab and another
+  // machine all resume it. `localStorage` would have made it a browser's, which
+  // is the wrong owner for something the agent has durable history of anyway.
+  [
+    `CREATE TABLE IF NOT EXISTS chat_sessions (
+      site_id TEXT PRIMARY KEY REFERENCES sites(id) ON DELETE CASCADE,
+      session_id TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )`,
+  ],
 ];
 
 /**

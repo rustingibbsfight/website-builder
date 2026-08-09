@@ -56,7 +56,7 @@ import { ConflictError, NotFoundError, ValidationError } from './errors.js';
 import { createPublishTarget, type PublishTarget } from './publish-target.js';
 import { createAssetStorage, type AssetStorage } from './storage.js';
 import { createVersionControl, type VersionControl, type VersionControlResult } from './version-control.js';
-import { AssetStore, BuildStore, PageStore, SiteStore, SubmissionStore, type BuildRecord, type SubmissionRecord } from './stores.js';
+import { AssetStore, BuildStore, PageStore, SiteStore, SubmissionStore, ChatSessionStore, type BuildRecord, type SubmissionRecord } from './stores.js';
 
 /** Per-site cap on captured form submissions — the endpoint is public, so this
  *  bounds storage abuse. Generous for a real form, far below flood volume. */
@@ -161,6 +161,15 @@ export class WbCore {
   private assets: AssetStore;
   private builds: BuildStore;
   private submissions: SubmissionStore;
+  /**
+   * Public, unlike the stores above.
+   *
+   * Those are wrapped in methods because there is a rule around each write —
+   * a cap, a notification, a cascade. This one is a pointer to a session eve
+   * owns, with no rule of ours to enforce, and a passthrough method per call
+   * would be ceremony that reads as though there were.
+   */
+  readonly chatSessions: ChatSessionStore;
 
   private constructor(
     private db: Client,
@@ -177,6 +186,7 @@ export class WbCore {
     this.assets = new AssetStore(db);
     this.builds = new BuildStore(db);
     this.submissions = new SubmissionStore(db);
+    this.chatSessions = new ChatSessionStore(db);
   }
 
   /** Open the database (local file or remote Turso), run migrations, wire storage. */
