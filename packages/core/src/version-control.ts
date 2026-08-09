@@ -47,6 +47,25 @@ interface GhBlob {
   encoding: 'utf-8' | 'base64';
 }
 
+/**
+ * A git ref, safe to interpolate into a URL path. (#50)
+ *
+ * The branch name went in raw, and it is configuration rather than a constant:
+ * a `?` starts a query string, a `#` truncates the path at a fragment, and `..`
+ * walks up to a different endpoint entirely — so a mistyped or hostile branch
+ * addresses something other than the ref it names, against a token with write
+ * access to the repository.
+ *
+ * **Per segment, not over the whole string.** `encodeURIComponent('feat/x')` is
+ * `feat%2Fx`, and GitHub's refs API takes a real slash — refs are hierarchical,
+ * and `feat/x` is an ordinary branch name. Encoding the lot would have replaced
+ * an injection with a feature nobody could use, which is the shape of fix that
+ * gets reverted six months later by somebody who only sees the breakage.
+ */
+export function encodeRefPath(ref: string): string {
+  return ref.split('/').map(encodeURIComponent).join('/');
+}
+
 export class GitHubVersionControl implements VersionControl {
   readonly name = 'github';
   private fetchFn: typeof fetch;
@@ -54,7 +73,7 @@ export class GitHubVersionControl implements VersionControl {
 
   constructor(private cfg: GitHubVersionControlConfig) {
     this.fetchFn = cfg.fetchFn ?? fetch;
-    this.branch = cfg.branch ?? 'main';
+    this.branch = encodeRefPath(cfg.branch ?? 'main');
   }
 
   private async gh<T = unknown>(

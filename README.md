@@ -171,8 +171,15 @@ pnpm e2e       # Playwright: real browser at desktop/tablet/mobile viewports
 - **No arbitrary filesystem access over HTTP.** Publish always targets the managed `data/dist` tree and deploy takes no client path — custom output directories are a local-CLI-only capability. Uploaded-asset filenames are sanitized and id-namespaced; preview/asset/static-serve paths are containment-checked against traversal.
 - **Uploaded assets** are served with `Content-Security-Policy: default-src 'none'` and `X-Content-Type-Options: nosniff`, so an uploaded SVG can't run script in the app origin.
 - **Auth** via `WB_API_TOKEN` (see above). Sites are isolated: a page/asset id from one site never resolves under another.
+- **Production fails closed.** With `NODE_ENV=production` and no `WB_API_TOKEN`, the server refuses to start rather than serving every write route to anyone who can reach the host. Unset off production is still open, which is what makes `wb serve` on a laptop usable without a secret.
 
-The wb API has no per-user identity — it's a single shared token for a trusted team, and untrusted multi-tenant use would need per-tenant auth added first.
+### wb is single-owner, and that is a decision
+
+**One credential, no per-user identity, and no per-tenant scoping — by design, not by omission.** Anyone holding `WB_API_TOKEN` can list, edit, retheme, deploy and delete every site the deployment holds. Eve inherits exactly that: the Slack bot authenticates as the deployment, not as the person who @mentioned it, so any workspace member who can reach the bot can act on any site.
+
+That is the right shape for what this is — one team's own sites, run by the people who own them — and the wrong shape for anything else. Writing it down settles the open question from the hardening review (#50) rather than leaving it looking like a gap somebody forgot.
+
+**What would have to change first**, if it ever stops being true: a real identity (Slack user/team → owner), an ownership column on `sites`, enforcement in `packages/core` rather than at the routes, and a way to hand ownership over. Until all four exist, do not add a partial version — a scoping check that covers the routes somebody remembered is worse than none, because it reads as protection.
 
 ## Visual editor (drag & drop)
 
