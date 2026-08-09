@@ -10,6 +10,7 @@
   "scripts": {
     "build": "pnpm -r build",
     "test": "pnpm -r test",
+    "mutate": "node scripts/mutate.mjs",
     "e2e": "pnpm --filter @wb/e2e e2e"
   }
 }

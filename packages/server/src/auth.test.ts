@@ -5,6 +5,13 @@ import { WbCore } from '@wb/core';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { buildApp } from './app.js';
+import {
+  LOGIN_MAX_FAILURES,
+  LOGIN_WINDOW_MS,
+  loginBlocked,
+  recordLoginFailure,
+  type LoginAttempts,
+} from './auth.js';
 
 const TOKEN = 'wb-secret-token-123';
 
@@ -41,18 +48,105 @@ describe('token auth', () => {
     expect(wrong.statusCode).toBe(401);
   });
 
-  it('rate-limits repeated failed logins with a 429', async () => {
-    // Hammer with wrong tokens; after the failure threshold the endpoint locks.
-    let saw429 = false;
-    for (let i = 0; i < 20; i++) {
-      const res = await app.inject({ method: 'POST', url: '/auth/login', payload: { token: `wrong-${i}` } });
-      if (res.statusCode === 429) {
-        saw429 = true;
-        break;
-      }
-      expect(res.statusCode).toBe(401);
+  it('rate-limits repeated failed logins with a 429, at the count it says', async () => {
+    /**
+     * Where, not merely that. "Somewhere in the first twenty" passes with the
+     * threshold off by one in either direction — and both directions are wrong
+     * in a way nobody would notice: one more attempt than intended handed to an
+     * attacker, or the owner locked out one attempt early on their own laptop.
+     */
+    const attempt = (n: number) =>
+      app.inject({ method: 'POST', url: '/auth/login', payload: { token: `wrong-${n}` } });
+
+    for (let i = 0; i < LOGIN_MAX_FAILURES; i++) {
+      expect((await attempt(i)).statusCode, `attempt ${i + 1}`).toBe(401);
     }
-    expect(saw429).toBe(true);
+    expect((await attempt(LOGIN_MAX_FAILURES)).statusCode).toBe(429);
+  });
+
+  it('lets a correct token through, and clears the count that was building', async () => {
+    // The half a limiter test usually leaves out: the counter is *cleared* on
+    // success, so an owner who mistyped fourteen times is not one keystroke from
+    // locking themselves out of their own API for five minutes.
+    for (let i = 0; i < LOGIN_MAX_FAILURES - 1; i++) {
+      await app.inject({ method: 'POST', url: '/auth/login', payload: { token: 'wrong' } });
+    }
+    expect((await app.inject({ method: 'POST', url: '/auth/login', payload: { token: TOKEN } })).statusCode).toBe(200);
+    for (let i = 0; i < LOGIN_MAX_FAILURES; i++) {
+      const res = await app.inject({ method: 'POST', url: '/auth/login', payload: { token: 'wrong' } });
+      expect(res.statusCode, `attempt ${i + 1} after a success`).toBe(401);
+    }
+  });
+
+  describe('the limiter, at the edges a route cannot reach', () => {
+    const AT = 1_000_000;
+    const full = (): LoginAttempts =>
+      new Map([['1.2.3.4', { count: LOGIN_MAX_FAILURES, resetAt: AT + LOGIN_WINDOW_MS }]]);
+
+    it('blocks at the threshold and not one below it', () => {
+      const nearly: LoginAttempts = new Map([
+        ['1.2.3.4', { count: LOGIN_MAX_FAILURES - 1, resetAt: AT + LOGIN_WINDOW_MS }],
+      ]);
+      expect(loginBlocked(nearly, '1.2.3.4', AT)).toBe(false);
+      expect(loginBlocked(full(), '1.2.3.4', AT)).toBe(true);
+    });
+
+    it('holds the block through the last instant of the window and not past it', () => {
+      // `now > resetAt` releases; on the boundary the window is still closed.
+      // One tick either way is the difference between a limiter that expires
+      // early and one that lingers, and neither is visible from the route.
+      const end = AT + LOGIN_WINDOW_MS;
+      expect(loginBlocked(full(), '1.2.3.4', end)).toBe(true);
+      expect(loginBlocked(full(), '1.2.3.4', end + 1)).toBe(false);
+    });
+
+    it('keeps counting inside the window and starts over once it has passed', () => {
+      const attempts = full();
+      const end = AT + LOGIN_WINDOW_MS;
+
+      recordLoginFailure(attempts, '1.2.3.4', end);
+      expect(attempts.get('1.2.3.4')?.count).toBe(LOGIN_MAX_FAILURES + 1);
+
+      recordLoginFailure(attempts, '1.2.3.4', end + 1);
+      expect(attempts.get('1.2.3.4')).toEqual({ count: 1, resetAt: end + 1 + LOGIN_WINDOW_MS });
+    });
+
+    it('knows nothing about an address it has never seen', () => {
+      expect(loginBlocked(new Map(), '9.9.9.9', AT)).toBe(false);
+    });
+
+    it('counts per address, so one attacker cannot lock everyone out', async () => {
+      /**
+       * The counter is keyed on `req.ip || 'unknown'`, and with that fallback
+       * reached unconditionally every caller shares one bucket: fifteen wrong
+       * guesses from anywhere would 429 the owner too. A limiter that turns into
+       * a denial of service is worse than none, and every test above sends from
+       * one address, which is exactly the fixture that cannot see it.
+       */
+      for (let i = 0; i < LOGIN_MAX_FAILURES; i++) {
+        await app.inject({
+          method: 'POST',
+          url: '/auth/login',
+          payload: { token: 'wrong' },
+          remoteAddress: '10.0.0.1',
+        });
+      }
+      const blocked = await app.inject({
+        method: 'POST',
+        url: '/auth/login',
+        payload: { token: 'wrong' },
+        remoteAddress: '10.0.0.1',
+      });
+      expect(blocked.statusCode).toBe(429);
+
+      const elsewhere = await app.inject({
+        method: 'POST',
+        url: '/auth/login',
+        payload: { token: 'wrong' },
+        remoteAddress: '10.0.0.2',
+      });
+      expect(elsewhere.statusCode).toBe(401);
+    });
   });
 
   it('supports the cookie login flow for browsers', async () => {
@@ -74,6 +168,36 @@ describe('token auth', () => {
     expect(preview.statusCode).toBe(200);
     const previewNoAuth = await app.inject({ url: `/preview/${site.id}/` });
     expect(previewNoAuth.statusCode).toBe(401);
+  });
+
+  it('marks the session cookie Secure in production, and not on plain-http dev', async () => {
+    /**
+     * The cookie carries the API token itself, so `Secure` is the difference
+     * between a session that cannot cross a plaintext hop and one that will.
+     * Nothing stood on it, and both ways of getting it wrong are silent: the
+     * comparison inverted sets it in dev and clears it in production, and `&&`
+     * in place of `||` clears it for every production deployment that terminates
+     * TLS at a proxy — which is all of them.
+     *
+     * Off in ordinary dev, deliberately: a browser drops a `Secure` cookie on
+     * plain-http localhost, so setting it always would make signing in locally
+     * silently impossible.
+     */
+    const before = process.env.NODE_ENV;
+    const cookieFor = async (env: string | undefined) => {
+      if (env === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = env;
+      try {
+        const login = await app.inject({ method: 'POST', url: '/auth/login', payload: { token: TOKEN } });
+        return login.headers['set-cookie'] as string;
+      } finally {
+        if (before === undefined) delete process.env.NODE_ENV;
+        else process.env.NODE_ENV = before;
+      }
+    };
+
+    expect(await cookieFor('production')).toContain('Secure');
+    expect(await cookieFor('test')).not.toContain('Secure');
   });
 
   it('reports auth state on /auth/me and serves the editor shell openly', async () => {

@@ -45,17 +45,26 @@ function tokenMatches(expected: string, candidate: string | undefined): boolean 
  * serverless invocations reset it — a real deployment should also front the API
  * with a platform rate limit). Successful logins clear the counter.
  */
-const LOGIN_MAX_FAILURES = 15;
-const LOGIN_WINDOW_MS = 5 * 60 * 1000;
-type LoginAttempts = Map<string, { count: number; resetAt: number }>;
+export const LOGIN_MAX_FAILURES = 15;
+export const LOGIN_WINDOW_MS = 5 * 60 * 1000;
+export type LoginAttempts = Map<string, { count: number; resetAt: number }>;
 
-function loginBlocked(attempts: LoginAttempts, ip: string, now: number): boolean {
+/**
+ * Exported for the tests, along with the two constants.
+ *
+ * Both of these already take `now` rather than reading the clock, which is an
+ * affordance for exactly this and which nothing used: driven only through the
+ * route, the window edge — `now` landing precisely on `resetAt` — is not
+ * reachable at all, and that is the edge where a window either releases an
+ * attacker a tick early or holds an honest person a tick late.
+ */
+export function loginBlocked(attempts: LoginAttempts, ip: string, now: number): boolean {
   const rec = attempts.get(ip);
   if (!rec || now > rec.resetAt) return false;
   return rec.count >= LOGIN_MAX_FAILURES;
 }
 
-function recordLoginFailure(attempts: LoginAttempts, ip: string, now: number): void {
+export function recordLoginFailure(attempts: LoginAttempts, ip: string, now: number): void {
   const rec = attempts.get(ip);
   if (!rec || now > rec.resetAt) {
     attempts.set(ip, { count: 1, resetAt: now + LOGIN_WINDOW_MS });

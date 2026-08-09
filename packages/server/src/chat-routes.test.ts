@@ -219,6 +219,27 @@ describe('reading it back', () => {
     const body = (await app.inject({ url: `/sites/${siteId}/chat?since=0` })).json();
     expect(body).toMatchObject({ nextIndex: 1, tailIndex: 9, live: true });
   });
+
+  it('stops being live the moment the cursor catches the tail', async () => {
+    /**
+     * The edge, which "9 is more than 1" does not reach. `live` is what keeps
+     * the panel polling and keeps a spinner on screen, so `>=` in place of `>`
+     * means a finished turn reads as still running for ever — the panel never
+     * settles, and it re-polls a session that has nothing left to say.
+     *
+     * One event read and a tail of exactly one: caught up, by the only
+     * definition there is.
+     */
+    await boot(
+      withEve((_url, index) =>
+        index === 0 ? accepted() : ndjson([{ type: 'text', text: 'x' }], { 'x-eve-tail-index': '1' }),
+      ),
+    );
+    await app.inject({ method: 'POST', url: `/sites/${siteId}/chat`, payload: { message: 'hi' } });
+
+    const body = (await app.inject({ url: `/sites/${siteId}/chat?since=0` })).json();
+    expect(body).toMatchObject({ nextIndex: 1, tailIndex: 1, live: false });
+  });
 });
 
 describe('starting again', () => {

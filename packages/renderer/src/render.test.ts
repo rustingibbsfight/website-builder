@@ -287,7 +287,72 @@ describe('lintPage', () => {
     expect(warnings.some((m) => m.includes('no alt text'))).toBe(true);
   });
 
+  describe('exactly one h1', () => {
+    /**
+     * "No h1" was the only case anybody wrote, and it is the one where the
+     * counter never runs. Everything about *counting* — that a hero counts,
+     * that a level-1 heading counts and a level-2 does not, and where "too
+     * many" begins — was resting on nothing.
+     *
+     * The failure is quiet in both directions. Counting `level: 2` as an h1
+     * warns about a page that is correct, which is the noise that gets a rule
+     * switched off; and `>= 1` in place of `> 1` warns about *every* page,
+     * including the ones with the single h1 the rule exists to require.
+     */
+    const pageOf = (children: WbNode[]): Page => ({
+      id: 'p1',
+      siteId: 's',
+      slug: 'about',
+      title: 'About',
+      meta: { description: 'd' },
+      sortOrder: 0,
+      tree: { id: 'r1', type: 'page-root', props: {}, children },
+    });
+    const heading = (id: string, level: number): WbNode => ({
+      id,
+      type: 'heading',
+      props: { level, text: 'T' },
+    });
+    const h1s = (children: WbNode[]) =>
+      lintPage(site(), pageOf(children))
+        .map((w) => w.message)
+        .filter((m) => /no h1|h1 elements/.test(m));
+
+    it('is quiet about a page with exactly one, from a heading or from a hero', () => {
+      expect(h1s([heading('a', 1)])).toEqual([]);
+      expect(h1s([{ id: 'hero', type: 'hero', props: {} }])).toEqual([]);
+    });
+
+    it('does not count a level-2 heading, and says so by warning there is none', () => {
+      expect(h1s([heading('a', 2)])).toEqual(['page has no h1 (add a hero or a level-1 heading)']);
+    });
+
+    it('starts complaining at two, and counts them', () => {
+      expect(h1s([heading('a', 1), heading('b', 1)])).toEqual([
+        'page has 2 h1 elements (keep exactly one)',
+      ]);
+      expect(h1s([{ id: 'hero', type: 'hero', props: {} }, heading('b', 1)])).toEqual([
+        'page has 2 h1 elements (keep exactly one)',
+      ]);
+    });
+
+    it('names the home page rather than the empty string it is stored as', () => {
+      // The slug of home is '', and a warning attributed to '' is a warning
+      // nobody can find the page for.
+      const home = { ...pageOf([heading('a', 1), heading('b', 1)]), slug: '' };
+      expect(lintPage(site(), home)[0]?.page).toBe('(home)');
+    });
+  });
+
   describe('contact forms that post nowhere', () => {
+    /**
+     * `fields` is required by the schema, and a form without it is a node this
+     * system cannot produce. It was left out of every fixture here, which was
+     * invisible while the linter read raw props and became three failures the
+     * moment it read parsed ones — the fixture that cannot exist, hiding the
+     * thing being looked for.
+     */
+    const FIELDS = [{ name: 'email', label: 'Email', type: 'email', required: true }];
     const pageWith = (props: Record<string, unknown>): Page => ({
       id: 'p1',
       siteId: 's',
@@ -301,7 +366,7 @@ describe('lintPage', () => {
         props: {},
         children: [
           { id: 'h1', type: 'heading', props: { level: 1, text: 'Contact' } },
-          { id: 'form1', type: 'contactForm', props },
+          { id: 'form1', type: 'contactForm', props: { fields: FIELDS, ...props } },
         ],
       },
     });
