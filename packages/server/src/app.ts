@@ -120,7 +120,33 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
       }
     },
   );
-  await registerAuth(app, opts.apiToken ?? process.env.WB_API_TOKEN);
+  /**
+   * **Fails closed in production.** (#50)
+   *
+   * `apiToken` unset means "open", which is the right default for
+   * `wb serve` on loopback — a single-owner tool on your own laptop should not
+   * demand a secret before it will draw a page. It is the wrong default the
+   * moment the same code is behind a public hostname, and nothing in between
+   * says which one you are.
+   *
+   * The CLI already refuses to bind a non-loopback host without a token. A
+   * deployment has no bind step to refuse at, so the check belongs here: in
+   * production, no token is a misconfiguration, and the honest response to a
+   * misconfiguration that would expose the whole write API is to not start.
+   *
+   * Deliberately a throw rather than a warning. A warning in a deploy log is a
+   * line nobody reads, and the failure it precedes is silent — the API answers
+   * normally, to everyone.
+   */
+  const apiToken = opts.apiToken ?? process.env.WB_API_TOKEN;
+  if (!apiToken && process.env.NODE_ENV === 'production') {
+    throw new Error(
+      'WB_API_TOKEN is not set and NODE_ENV=production. Every write route would be open to ' +
+        'anyone who can reach this host. Set WB_API_TOKEN (e.g. `openssl rand -hex 24`), or run ' +
+        'with NODE_ENV unset for local, loopback-only use.',
+    );
+  }
+  await registerAuth(app, apiToken);
 
   if (opts.openapi !== false) {
     await app.register(swagger, {

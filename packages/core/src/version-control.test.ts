@@ -3,7 +3,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WbCore } from './core.js';
-import { createVersionControl, GitHubVersionControl, type VersionControl } from './version-control.js';
+import {
+  createVersionControl,
+  encodeRefPath,
+  GitHubVersionControl,
+  type VersionControl,
+} from './version-control.js';
 
 /** A scripted GitHub API — record calls, respond per endpoint. */
 function fakeGitHub(opts: { repoExists?: boolean } = {}) {
@@ -296,5 +301,84 @@ describe('WbCore deploy + version control', () => {
     const site = await core.createSite('NoVcs');
     await expect(core.commitSiteToVcs(site.id)).rejects.toThrow(/WB_VCS=github/);
     core.close();
+  });
+});
+
+describe('the branch name in a URL path (#50)', () => {
+  /**
+   * The branch is configuration, not a constant, and it went into an API path
+   * raw. A `?` starts a query string, a `#` truncates the path at a fragment,
+   * and `..` walks to a different endpoint — against a token that can write to
+   * the repository.
+   */
+  it('encodes a character that would change which endpoint is addressed', () => {
+    expect(encodeRefPath('main?x=1')).toBe('main%3Fx%3D1');
+    expect(encodeRefPath('main#frag')).toBe('main%23frag');
+    expect(encodeRefPath('..')).toBe('..');
+    expect(encodeRefPath('a b')).toBe('a%20b');
+  });
+
+  /**
+   * And the reason this is per segment rather than over the whole string.
+   * `encodeURIComponent('feat/x')` is `feat%2Fx`; GitHub's refs API takes a
+   * real slash, because refs are hierarchical and `feat/x` is an ordinary
+   * branch. Encoding the lot would replace an injection with a feature nobody
+   * could use — the shape of fix that gets reverted by somebody who only sees
+   * the breakage.
+   */
+  it('leaves a hierarchical ref working', () => {
+    expect(encodeRefPath('release/2026-08')).toBe('release/2026-08');
+    expect(encodeRefPath('feat/a b')).toBe('feat/a%20b');
+  });
+
+  it('reaches the ref this branch actually names', async () => {
+    const gh = fakeGitHub({ repoExists: true });
+    const vcs = new GitHubVersionControl({
+      owner: 'clinicowner',
+      token: 't',
+      branch: 'release/2026-08',
+      fetchFn: gh.fetchFn,
+    });
+    await vcs.commitSite({
+      siteId: 'site_1',
+      siteName: 'Clinic',
+      source: { pages: [] },
+      files: new Map([['index.html', '<p>hi</p>']]),
+      message: 'x',
+    });
+    const refCalls = gh.calls.filter((call) => call.path.includes('/git/ref'));
+    expect(refCalls.length).toBeGreaterThan(0);
+    for (const call of refCalls) expect(call.path).toContain('heads/release/2026-08');
+  });
+
+  /**
+   * The wiring, not the function.
+   *
+   * A hierarchical branch is unchanged by encoding, so the test above passes
+   * whether or not `encodeRefPath` is called at all — found by deleting the
+   * call and watching everything stay green. This uses a branch the encoding
+   * actually changes, so the assertion is about the request that went out.
+   */
+  it('encodes it on the way into the request, not only in the helper', async () => {
+    const gh = fakeGitHub({ repoExists: true });
+    const vcs = new GitHubVersionControl({
+      owner: 'clinicowner',
+      token: 't',
+      branch: 'main?ref=other',
+      fetchFn: gh.fetchFn,
+    });
+    await vcs.commitSite({
+      siteId: 'site_1',
+      siteName: 'Clinic',
+      source: { pages: [] },
+      files: new Map([['index.html', '<p>hi</p>']]),
+      message: 'x',
+    });
+    const refCalls = gh.calls.filter((call) => call.path.includes('/git/ref'));
+    expect(refCalls.length).toBeGreaterThan(0);
+    for (const call of refCalls) {
+      expect(call.path, 'the ? survived into the path').not.toContain('?');
+      expect(call.path).toContain('main%3Fref%3Dother');
+    }
   });
 });
