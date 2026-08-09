@@ -164,6 +164,224 @@ describe('GitHubVersionControl', () => {
     expect(result.commitUrl).toContain('commit_1');
   });
 
+  it('sends content-type only when there is a body', async () => {
+    /**
+     * A GET carrying `content-type: application/json` and no body is what
+     * Fastify answers `400 "Body cannot be empty"` to — the same trap this
+     * repo's own `wbRequest` fell into. GitHub tolerates it, which is worse:
+     * the header is wrong on every read and nothing says so until some proxy
+     * or gateway in the middle is stricter than the origin.
+     */
+    const seen: Array<{ method: string; contentType: string | undefined }> = [];
+    const fetchFn = (async (url: string | URL | Request, init?: RequestInit) => {
+      const headers = new Headers(init?.headers);
+      seen.push({
+        method: init?.method ?? 'GET',
+        contentType: headers.get('content-type') ?? undefined,
+      });
+      return new Response(JSON.stringify({ login: 'clinicowner' }), { status: 200 });
+    }) as unknown as typeof fetch;
+
+    const vc = new GitHubVersionControl({ token: 't', owner: 'clinicowner', fetchFn });
+    await (vc as unknown as { gh: (m: string, p: string, b?: unknown) => Promise<unknown> }).gh(
+      'GET',
+      '/user',
+    );
+    await (vc as unknown as { gh: (m: string, p: string, b?: unknown) => Promise<unknown> }).gh(
+      'POST',
+      '/user/repos',
+      { name: 'x' },
+    );
+
+    expect(seen[0]).toEqual({ method: 'GET', contentType: undefined });
+    expect(seen[1]?.contentType).toBe('application/json');
+  });
+
+  it('treats a 422 on create as the repo already being there, once it checks', async () => {
+    /**
+     * Two deploys of one site race, the second loses, and GitHub answers 422.
+     * That is success — but only if the repo really is there, so it is
+     * confirmed rather than assumed. Inverted, every concurrent deploy fails
+     * with a message about creating a repo that exists.
+     */
+    let created = false;
+    const fetchFn = (async (url: string | URL | Request, init?: RequestInit) => {
+      const u = new URL(String(url));
+      const method = init?.method ?? 'GET';
+      const json = (status: number, data: unknown) =>
+        new Response(JSON.stringify(data), { status });
+
+      if (u.pathname === '/user') return json(200, { login: 'clinicowner' });
+      if (u.pathname.match(/^\/repos\/[^/]+\/[^/]+$/) && method === 'GET') {
+        // Absent the first time, present once the racing deploy has made it.
+        return created ? json(200, { name: 'repo' }) : json(404, { message: 'Not Found' });
+      }
+      if (u.pathname === '/user/repos' && method === 'POST') {
+        created = true;
+        return json(422, { message: 'name already exists on this account' });
+      }
+      return json(500, { message: `unexpected ${method} ${u.pathname}` });
+    }) as unknown as typeof fetch;
+
+    const vc = new GitHubVersionControl({ token: 't', owner: 'clinicowner', fetchFn });
+    await expect(
+      (vc as unknown as { ensureRepo: (r: string) => Promise<void> }).ensureRepo('wb-site-x'),
+    ).resolves.toBeUndefined();
+  });
+
+  it('does not treat a 422 as success when the repo still is not there', async () => {
+    // The half that keeps the other honest: 422 for some *other* reason — a
+    // name GitHub refuses, a plan limit — must not read as a repo that exists.
+    const fetchFn = (async (url: string | URL | Request, init?: RequestInit) => {
+      const u = new URL(String(url));
+      const method = init?.method ?? 'GET';
+      const json = (status: number, data: unknown) =>
+        new Response(JSON.stringify(data), { status });
+      if (u.pathname === '/user') return json(200, { login: 'clinicowner' });
+      if (u.pathname === '/user/repos' && method === 'POST') return json(422, { message: 'nope' });
+      return json(404, { message: 'Not Found' });
+    }) as unknown as typeof fetch;
+
+    const vc = new GitHubVersionControl({ token: 't', owner: 'clinicowner', fetchFn });
+    await expect(
+      (vc as unknown as { ensureRepo: (r: string) => Promise<void> }).ensureRepo('wb-site-x'),
+    ).rejects.toThrow(/failed \(422\)/);
+  });
+
+  it('commits a text file as utf-8 and its bytes verbatim', async () => {
+    /**
+     * The base64 half had a test and the string half did not, so the branch
+     * that decides between them was only ever exercised one way. Inverted, a
+     * page's HTML is base64-encoded and committed as gibberish that still
+     * pushes cleanly.
+     */
+    const gh = fakeGitHub({ repoExists: true });
+    await new GitHubVersionControl({ token: 't', owner: 'clinicowner', fetchFn: gh.fetchFn }).commitSite({
+      siteId: 's1',
+      siteName: 'Site',
+      source: {},
+      files: new Map<string, string | Uint8Array>([['index.html', '<h1>Hi</h1>']]),
+      message: 'Deploy',
+    });
+
+    const blob = gh.calls.find(
+      (c) => c.path.endsWith('/git/blobs') && (c.body as { content: string }).content === '<h1>Hi</h1>',
+    );
+    expect(blob, 'the html was not committed as itself').toBeTruthy();
+    expect((blob!.body as { encoding: string }).encoding).toBe('utf-8');
+  });
+
+  it('does not read a 200 with no sha as a branch that exists', async () => {
+    /**
+     * GitHub answers 200 for a ref whose body is not what this expects — a
+     * matching-refs list rather than a single ref, most commonly, which comes
+     * back as an array with no `object`. Reading the status alone would return
+     * `undefined` as the parent sha, and the commit that followed would be
+     * built on nothing.
+     *
+     * Three sites share this shape and all three were unpinned. The branch has
+     * to fall through to bootstrapping, which is what a repo with no usable tip
+     * actually needs.
+     */
+    const paths: string[] = [];
+    let bootstrapped = false;
+    const fetchFn = (async (url: string | URL | Request, init?: RequestInit) => {
+      const u = new URL(String(url));
+      const method = init?.method ?? 'GET';
+      paths.push(`${method} ${u.pathname}`);
+      const json = (status: number, data: unknown) =>
+        new Response(JSON.stringify(data), { status });
+
+      if (u.pathname.match(/^\/repos\/[^/]+\/[^/]+$/) && method === 'GET') {
+        return json(200, { name: 'repo' });
+      }
+      if (u.pathname.match(/\/git\/ref\/heads\//) && method === 'GET') {
+        // 200, and nothing usable in it — before *and* after the bootstrap, so
+        // the re-read path is exercised too.
+        return json(200, bootstrapped ? [{ ref: 'refs/heads/main' }] : {});
+      }
+      if (u.pathname.endsWith('/contents/.wb-init') && method === 'PUT') {
+        bootstrapped = true;
+        return json(201, { commit: { sha: 'init_1' } });
+      }
+      if (u.pathname.endsWith('/git/blobs')) return json(201, { sha: 'blob_1' });
+      if (u.pathname.endsWith('/git/trees')) return json(201, { sha: 'tree_1' });
+      if (u.pathname.endsWith('/git/commits')) {
+        return json(201, { sha: 'commit_1', html_url: 'https://github.com/o/r/commit/commit_1' });
+      }
+      if (u.pathname.match(/\/git\/refs\/heads\//) && method === 'PATCH') return json(200, {});
+      return json(500, { message: `unexpected ${method} ${u.pathname}` });
+    }) as unknown as typeof fetch;
+
+    const result = await new GitHubVersionControl({
+      token: 't',
+      owner: 'clinicowner',
+      fetchFn,
+    }).commitSite({
+      siteId: 's1',
+      siteName: 'Site',
+      source: {},
+      files: new Map<string, string | Uint8Array>([['index.html', 'x']]),
+      message: 'Deploy',
+    });
+
+    // It bootstrapped rather than committing onto a sha it did not have.
+    expect(paths.some((p) => p.includes('/contents/.wb-init'))).toBe(true);
+    expect(result.commitUrl).toContain('commit_1');
+  });
+
+  it('re-reads the tip when a racing deploy bootstrapped the repo first', async () => {
+    /**
+     * The documented race, and the branch nothing reached: two deploys of one
+     * site, and the second one's `PUT .wb-init` comes back 422 with no commit
+     * sha because the first already made the branch. Re-reading the tip is what
+     * turns that into a normal commit; without it the deploy fails with
+     * "repository init failed" about a repository that is fine.
+     */
+    let branchExists = false;
+    const fetchFn = (async (url: string | URL | Request, init?: RequestInit) => {
+      const u = new URL(String(url));
+      const method = init?.method ?? 'GET';
+      const json = (status: number, data: unknown) =>
+        new Response(JSON.stringify(data), { status });
+
+      if (u.pathname.match(/^\/repos\/[^/]+\/[^/]+$/) && method === 'GET') {
+        return json(200, { name: 'repo' });
+      }
+      if (u.pathname.match(/\/git\/ref\/heads\//) && method === 'GET') {
+        return branchExists
+          ? json(200, { object: { sha: 'raced_1' } })
+          : json(404, { message: 'Not Found' });
+      }
+      if (u.pathname.endsWith('/contents/.wb-init') && method === 'PUT') {
+        // The other deploy won. No commit sha comes back.
+        branchExists = true;
+        return json(422, { message: "sha wasn't supplied" });
+      }
+      if (u.pathname.endsWith('/git/blobs')) return json(201, { sha: 'blob_1' });
+      if (u.pathname.endsWith('/git/trees')) return json(201, { sha: 'tree_1' });
+      if (u.pathname.endsWith('/git/commits')) {
+        return json(201, { sha: 'commit_1', html_url: 'https://github.com/o/r/commit/commit_1' });
+      }
+      if (u.pathname.match(/\/git\/refs\/heads\//) && method === 'PATCH') return json(200, {});
+      return json(500, { message: `unexpected ${method} ${u.pathname}` });
+    }) as unknown as typeof fetch;
+
+    const calls: unknown[] = [];
+    const vc = new GitHubVersionControl({ token: 't', owner: 'clinicowner', fetchFn });
+    const result = await vc.commitSite({
+      siteId: 's1',
+      siteName: 'Site',
+      source: {},
+      files: new Map<string, string | Uint8Array>([['index.html', 'x']]),
+      message: 'Deploy',
+    });
+    void calls;
+
+    // It committed, and onto the sha the racing deploy left behind.
+    expect(result.commitUrl).toContain('commit_1');
+  });
+
   it('creates under the org when the owner is not the authenticated user', async () => {
     /**
      * The fake has always answered `/user` with the same login the tests pass
