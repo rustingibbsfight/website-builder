@@ -1,7 +1,7 @@
 import { defineTool } from 'eve/tools';
 import { z } from 'zod';
 
-import { requestAndWait } from '../../lib/studio';
+import { askForImage, nextDelay } from '../../lib/studio';
 
 /**
  * Ask ComfyStudio for a picture.
@@ -26,8 +26,25 @@ import { requestAndWait } from '../../lib/studio';
  * whole accepted list, which the model can act on in the same turn.
  */
 
-/** Most of a render, without holding a tool call open for a whole one. */
-const WAIT_MS = 150_000;
+/**
+ * It does not wait, and that is a correctness fix rather than a speed one.
+ *
+ * This used to submit and then poll for up to 150 seconds inside one tool call.
+ * The ticket is the **receipt for a spend**, and holding the only copy of it
+ * inside a call the platform can kill means a render that was submitted and
+ * paid for and whose id exists nowhere the agent can see. `apps/eve` has no
+ * `vercel.json`, so its `maxDuration` is the platform default — nowhere near
+ * 150 seconds — which made that the likely outcome rather than the unlucky one.
+ *
+ * It also made the editor's chat panel look frozen: a turn that emits no events
+ * for two and a half minutes is indistinguishable from a stuck one, and the
+ * panel now has somebody watching it.
+ *
+ * So the ticket comes back immediately and `image_status` does the waiting, on
+ * a later call, once the id is safely written into the transcript. The cost is
+ * one extra model call on a render that would have landed inside the old
+ * window; the thing bought is that no render is ever unreachable.
+ */
 
 export default defineTool({
   description:
@@ -66,7 +83,7 @@ export default defineTool({
     count: z.number().int().min(1).max(4).optional().describe('How many to choose between. Defaults to 1.'),
   }),
   async execute(spec) {
-    const ticket = await requestAndWait(spec, WAIT_MS);
+    const ticket = await askForImage(spec);
 
     if (ticket.status === 'failed') {
       throw new Error(ticket.error ?? 'ComfyStudio could not make that image.');
@@ -83,7 +100,16 @@ export default defineTool({
       // how a wrong picture is diagnosable without reading its transcript.
       assumptions: ticket.assumptions,
       ...(ticket.status === 'running'
-        ? { note: `Still rendering (${ticket.pending} left). Call image_status with ticket "${ticket.ticket}".` }
+        ? {
+            // Told when to come back, so the first poll is not instant. Asking
+            // is what advances it, but asking a hundred times in a row is a
+            // hundred model calls that all say "still running".
+            retryAfterMs: nextDelay(0),
+            note:
+              `Submitted and paid for (${ticket.pending} rendering). Call image_status with ticket ` +
+              `"${ticket.ticket}" in a few seconds — it waits a little on your behalf. Do not discard ` +
+              `the ticket: it is the only way to collect this render.`,
+          }
         : {}),
     };
   },

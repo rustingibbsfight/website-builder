@@ -5,8 +5,9 @@ import {
   guidance,
   GUIDANCE_TTL_MS,
   nextDelay,
+  POLL_BUDGET_MS,
+  pollUntil,
   readTicket,
-  requestAndWait,
   sendBrandKit,
   type Guidance,
   type Ticket,
@@ -90,53 +91,73 @@ describe('studio client — transport', () => {
   });
 });
 
-describe('studio client — polling', () => {
+describe('the submit does not wait, and the poll does', () => {
+  /**
+   * `requestAndWait` used to submit and then poll for up to 150 seconds inside
+   * one tool call, and the latency was the least of it.
+   *
+   * The ticket is the **receipt for a spend**. Holding the only copy of it
+   * inside a call the platform can kill means a render that was submitted and
+   * paid for, whose id exists nowhere the agent can see — a picture nobody can
+   * collect. `apps/eve` has no `vercel.json`, so its `maxDuration` is the
+   * platform default and nowhere near 150 seconds, which made that the likely
+   * outcome rather than the unlucky one.
+   */
   it('backs off and then holds at ten seconds', () => {
     expect([0, 1, 2, 3, 4, 20].map(nextDelay)).toEqual([2_000, 4_000, 8_000, 10_000, 10_000, 10_000]);
   });
 
-  it('polls until the picture lands and returns it', async () => {
+  it('returns the ticket on the submit, having asked exactly once', async () => {
+    // One call, one round trip, no sleeping. The id is in the caller's hands
+    // before anything can be killed.
+    stubFetch(() => ({ status: 202, body: ticket({ ticket: 'tkt_new' }) }));
+
+    const out = await askForImage({ purpose: 'hero', subject: 'a coastal clinic' });
+
+    expect(out.ticket).toBe('tkt_new');
+    expect(out.status).toBe('running');
+    expect(calls.map((c) => c.init.method)).toEqual(['POST']);
+  });
+
+  it('polls an existing ticket until the picture lands', async () => {
     stubFetch((_call, i) =>
-      i < 2
-        ? { body: ticket() }
-        : { body: ticket({ status: 'ready', images: ['https://blob/a.png'], pending: 0 }) },
+      i < 2 ? { body: ticket() } : { body: ticket({ status: 'ready', images: ['https://blob/a.png'], pending: 0 }) },
     );
 
     let clock = 0;
-    const out = await requestAndWait(
-      { purpose: 'hero', subject: 'a coastal clinic' },
-      120_000,
-      () => clock,
-      async (ms) => {
-        clock += ms;
-      },
-    );
+    const out = await pollUntil('tkt_1', 120_000, () => clock, async (ms: number) => {
+      clock += ms;
+    });
 
     expect(out.status).toBe('ready');
     expect(out.images).toEqual(['https://blob/a.png']);
-    expect(calls.map((c) => c.init.method)).toEqual(['POST', 'GET', 'GET']);
+    // Only GETs: the submit already happened, on an earlier call.
+    expect(calls.map((c) => c.init.method)).toEqual(['GET', 'GET', 'GET']);
   });
 
-  it('hands back the still-running ticket when the budget runs out, rather than throwing away the id', async () => {
-    // A render that never finishes: the id is the only way to collect a render
-    // that has already been paid for, so losing it is worse than waiting.
+  it('hands back the still-running ticket when the budget runs out', async () => {
+    // Still running is not a failure, and the id is how to collect it. Throwing
+    // here would lose a render that has already been paid for.
     stubFetch(() => ({ body: ticket({ ticket: 'tkt_slow' }) }));
 
     let clock = 0;
-    const out = await requestAndWait(
-      { purpose: 'hero', subject: 'x' },
-      1_000,
-      () => clock,
-      async (ms) => {
-        clock += ms;
-      },
-    );
+    const out = await pollUntil('tkt_slow', 1_000, () => clock, async (ms: number) => {
+      clock += ms;
+    });
 
     expect(out.status).toBe('running');
     expect(out.ticket).toBe('tkt_slow');
-    // Budget was under the first backoff step, so it never even polled — and
-    // still came back with the id rather than an error.
+    // The budget was under the first backoff step, so it asked once and left.
     expect(calls).toHaveLength(1);
+  });
+
+  it('waits only a few seconds by default, not a whole render', async () => {
+    /**
+     * The bound is the point. Ten seconds saves a model call on a picture that
+     * is nearly done and sits inside any function budget; a hundred and fifty
+     * is the thing that was wrong.
+     */
+    expect(POLL_BUDGET_MS).toBeLessThanOrEqual(15_000);
   });
 });
 
