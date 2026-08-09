@@ -28,6 +28,12 @@ A site needs pictures. Two ways to get one, and picking the wrong one wastes eit
 
 `request_image` describes what the *page* needs — purpose, subject, mood, the site's `palette` as hex, and `textSafe` for where a headline will sit. It has no field for a model, a workflow or a prompt, and that is deliberate: ComfyStudio's own agent decides those. Don't try to smuggle prompt text into `subject` — say what the picture is of.
 
+**Say the size you actually have.** Once the layout is decided, send `width` and `height` for the real slot rather than an `aspect` and a guess at `minWidth`. Either edge alone is enough — the other follows the shape. `media: "video"` asks for a clip instead of a still, with `seconds` for its length; clips are capped smaller, because a clip is every frame of it.
+
+**The accepted values are not in this repo.** Purposes, aspects and the rest live in ComfyStudio and change there, so `request_image` takes them as plain strings and `image_guidance` is how you find out what is currently valid. Call it once before making images for a site you haven't worked on. If a request comes back complaining about a value, the error names the whole accepted list — read it and retry; don't guess twice.
+
+**Teach the brand once, before the pictures.** `brand_kit` sends a site's look to ComfyStudio, which decomposes it into a named library and files each part under its own category. Every later `request_image` carrying `brand: "<name>"` is written against those stored parts. This is about the *ninth* picture, not the first: a look re-described in each call is re-interpreted in each call, and by the third reading it is a different brand. Sending the kit again with a changed description edits it rather than making a second one, which is how you correct a brand after the user disagrees with a picture. Call `brand_kit` with no arguments to see which brands already exist.
+
 - It **costs money** and the key has a daily ceiling. One request per slot; use `count` only when the user asked to choose between options, and never re-request because you'd like a second opinion.
 - If it comes back `status: "running"`, the render is submitted and paid for and the `ticket` is how to collect it — call `image_status` with that ticket, as many times as needed. Polling is what advances it. Never discard a ticket.
 - Always carry the returned `alt` through to the image prop. A generated picture with no alt text is this integration quietly making the site worse.
