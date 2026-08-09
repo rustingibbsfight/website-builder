@@ -16,7 +16,7 @@
  * Usage: node scripts/mutate.mjs packages/<pkg>/src/<file>.ts [--limit N]
  */
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, unlinkSync } from "node:fs";
 
 const target = process.argv[2];
 if (!target) {
@@ -48,11 +48,18 @@ const original = readFileSync(target, "utf8");
  * exception in the loop — leaves the mutant on disk, and the next thing anyone
  * does is run the tests and believe the failure, or commit it.
  */
+const BREADCRUMB = ".mutate-in-flight";
+
 let restored = false;
 function restore() {
   if (restored) return;
   restored = true;
   writeFileSync(target, original);
+  try {
+    unlinkSync(BREADCRUMB);
+  } catch {
+    // Already gone, which is the state we wanted.
+  }
 }
 process.on("exit", restore);
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
@@ -61,6 +68,34 @@ for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
     process.exit(130);
   });
 }
+
+/**
+ * The marker that outlives the process.
+ *
+ * None of the above survives `SIGKILL`, and something will send one — a task
+ * runner stopping a background job, a container OOM, `kill -9`. Nor is
+ * `SIGTERM` prompt: the test run is `execFileSync`, which blocks the event
+ * loop, so a handler cannot fire until the current run returns. All three
+ * failures happened on one night in the sibling repo, and they compound — an
+ * orphaned sweep left mutating fails an *unrelated* sweep's confirmations, and
+ * every survivor there is recorded as killed, which is the flattering
+ * direction.
+ *
+ * So: a file naming the target while a sweep is in flight. A leftover one means
+ * "check this file before you believe anything"; the repair is
+ * `git checkout -- <file>`, which is why this refuses rather than offering to
+ * do it — the original content died with the process and only git still has it.
+ * It doubles as the interlock against two sweeps at once.
+ */
+if (existsSync(BREADCRUMB)) {
+  const stale = readFileSync(BREADCRUMB, "utf8").trim();
+  console.error(
+    `A previous sweep of ${stale} did not finish cleanly — that file may still hold a mutant.\n` +
+      `Check it (git diff ${stale}) and revert before sweeping again, then remove ${BREADCRUMB}.`,
+  );
+  process.exit(2);
+}
+writeFileSync(BREADCRUMB, `${target}\n`);
 
 /**
  * Mutations worth making.

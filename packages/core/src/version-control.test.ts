@@ -28,6 +28,14 @@ function fakeGitHub(opts: { repoExists?: boolean } = {}) {
     }
     if (u.pathname === '/user' && method === 'GET') return json(200, { login: 'clinicowner' });
     if (u.pathname === '/user/repos' && method === 'POST') return json(201, { name: body.name });
+    // The org path. Absent from this fake until it was noticed that every test
+    // passed `clinicowner` as the owner — the same login `/user` answers — so
+    // `isSelf` was true in every run and the org branch had never been reached.
+    // A fake that cannot answer a request the code makes hides that branch as
+    // completely as no test at all.
+    if (u.pathname.match(/^\/orgs\/[^/]+\/repos$/) && method === 'POST') {
+      return json(201, { name: body.name });
+    }
     if (u.pathname.match(/\/git\/ref\/heads\//) && method === 'GET') {
       return refExists ? json(200, { object: { sha: 'parent_1' } }) : json(404, { message: 'Not Found' });
     }
@@ -156,6 +164,52 @@ describe('GitHubVersionControl', () => {
     expect(result.commitUrl).toContain('commit_1');
   });
 
+  it('creates under the org when the owner is not the authenticated user', async () => {
+    /**
+     * The fake has always answered `/user` with the same login the tests pass
+     * as the owner, so `isSelf` was true in every run and `/orgs/.../repos` had
+     * never been called. GitHub rejects `POST /user/repos` for a repo that
+     * belongs to an org, so an inverted check makes version control work for
+     * personal accounts and fail on the first deploy for everyone else.
+     *
+     * The comparison is case-insensitive on both sides, and that matters here
+     * rather than being tidiness: GitHub preserves the case somebody typed, so
+     * an owner configured as `ClinicOwner` against a login of `clinicowner` is
+     * the same account and must not be treated as an org.
+     */
+    const orgRun = fakeGitHub({ repoExists: false });
+    await new GitHubVersionControl({
+      token: 't',
+      owner: 'some-org',
+      fetchFn: orgRun.fetchFn,
+    }).commitSite({
+      siteId: 's1',
+      siteName: 'Site',
+      source: {},
+      files: new Map<string, string | Uint8Array>([['index.html', 'x']]),
+      message: 'Deploy',
+    });
+    const orgPaths = orgRun.calls.map((c) => `${c.method} ${c.path}`);
+    expect(orgPaths).toContain('POST /orgs/some-org/repos');
+    expect(orgPaths).not.toContain('POST /user/repos');
+
+    const selfRun = fakeGitHub({ repoExists: false });
+    await new GitHubVersionControl({
+      token: 't',
+      owner: 'ClinicOwner',
+      fetchFn: selfRun.fetchFn,
+    }).commitSite({
+      siteId: 's1',
+      siteName: 'Site',
+      source: {},
+      files: new Map<string, string | Uint8Array>([['index.html', 'x']]),
+      message: 'Deploy',
+    });
+    const selfPaths = selfRun.calls.map((c) => `${c.method} ${c.path}`);
+    expect(selfPaths).toContain('POST /user/repos');
+    expect(selfPaths.some((p) => p.startsWith('POST /orgs/'))).toBe(false);
+  });
+
   it('retries the commit onto a fresh parent when the branch moved (422 non-fast-forward)', async () => {
     // A racing deploy advances the branch: the first PATCH is a non-fast-forward
     // 422, and the re-read tip returns a new parent. The retry must succeed.
@@ -238,6 +292,47 @@ describe('createVersionControl selection', () => {
     expect(
       createVersionControl({ WB_VCS: 'github', WB_GITHUB_TOKEN: 't', WB_GITHUB_OWNER: 'o' }),
     ).toBeInstanceOf(GitHubVersionControl);
+  });
+
+  it('refuses a half-configured github, whichever half is missing', () => {
+    /**
+     * `||`, and the `&&` version only throws when *both* are absent — so a
+     * deployment with a token and no owner builds a client that addresses
+     * `/repos/undefined/...` and fails on the first deploy, at the provider,
+     * where the message is a 404 rather than the name of the variable to set.
+     * A refusal at construction says which one.
+     */
+    expect(() => createVersionControl({ WB_VCS: 'github', WB_GITHUB_TOKEN: 't' })).toThrow(
+      /WB_GITHUB_OWNER/,
+    );
+    expect(() => createVersionControl({ WB_VCS: 'github', WB_GITHUB_OWNER: 'o' })).toThrow(
+      /WB_GITHUB_TOKEN/,
+    );
+  });
+
+  it('reads the privacy flag as an opt-out, not as a boolean', () => {
+    /**
+     * Private is the default and `WB_GITHUB_PRIVATE` only exists to turn it
+     * off, so **only the literal `false` is public** — anything else set is
+     * somebody expressing an intent this cannot parse, and guessing wrong
+     * publishes a site's whole source. Unset leaves the default alone rather
+     * than writing `true`, so the two are not the same thing.
+     */
+    const privacyOf = (value?: string) =>
+      (
+        createVersionControl({
+          WB_VCS: 'github',
+          WB_GITHUB_TOKEN: 't',
+          WB_GITHUB_OWNER: 'o',
+          ...(value === undefined ? {} : { WB_GITHUB_PRIVATE: value }),
+        }) as unknown as { cfg: { private?: boolean } }
+      ).cfg.private;
+
+    expect(privacyOf('false')).toBe(false);
+    expect(privacyOf('FALSE')).toBe(false);
+    expect(privacyOf('true')).toBe(true);
+    expect(privacyOf('yes')).toBe(true);
+    expect(privacyOf(undefined)).toBeUndefined();
   });
 });
 
