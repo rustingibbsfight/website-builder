@@ -190,9 +190,13 @@ The first sweep over the security-facing modules found, among others, that
 SSRF guard's upper bound off by one, and that the session cookie's `Secure` flag
 had nothing standing on it at all.
 
-**Still unswept**, and recorded here rather than left to look finished:
-`packages/core/src/version-control.ts` (10 survivors, GitHub API plumbing) and
-`packages/core/src/notify.ts` (3).
+**Partly swept**, recorded here rather than left to look finished:
+`packages/core/src/version-control.ts` still has **8 survivors**. They are all
+one shape — `status === 200 && data.object?.sha`, repeated at four call sites —
+and closing them means teaching the GitHub fake to answer the failure modes it
+currently cannot: a ref lookup that 200s with no sha, a create that 422s on a
+name already taken. That is a fixture job rather than an assertion job, which is
+why it is a separate piece of work and not a line in this one.
 
 ## Security model
 

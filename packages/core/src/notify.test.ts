@@ -65,6 +65,25 @@ describe('SlackWebhookNotifier', () => {
     expect(text).toContain('…');
     expect(text.length).toBeLessThan(1000);
   });
+
+  it('leaves a field of exactly the preview length whole', async () => {
+    /**
+     * A cap is a limit, and 5000 characters says nothing about where it is.
+     * `>=` in place of `>` puts an ellipsis on a message that was not
+     * shortened, which is a notification claiming there is more to read when
+     * there is not — the reader goes and looks, and finds the same words.
+     */
+    const capture_ = capture();
+    const exact = 'x'.repeat(500);
+    await new SlackWebhookNotifier({
+      webhookUrl: 'https://hooks.slack.com/x',
+      fetchFn: capture_.fetchFn,
+    }).notify(notice({ data: { message: exact } }));
+
+    const text = capture_.calls[0]!.body.text as string;
+    expect(text).toContain(exact);
+    expect(text).not.toContain('…');
+  });
 });
 
 describe('ResendEmailNotifier', () => {
@@ -117,6 +136,22 @@ describe('notifyAll', () => {
     expect(err).toHaveBeenCalled();
     err.mockRestore();
   });
+
+  it('says nothing when every notifier worked', async () => {
+    // The other half of the branch, and the one that keeps the log usable: a
+    // console full of "notification failed" about notifications that were sent
+    // is a console nobody reads on the day one really fails.
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const ok: SubmissionNotifier = { name: 'ok', notify: async () => {} };
+
+    await notifyAll([ok, { name: 'ok2', notify: async () => {} }], notice());
+    expect(err).not.toHaveBeenCalled();
+    err.mockRestore();
+  });
+
+  it('does nothing at all, and does not throw, with no notifiers', async () => {
+    await expect(notifyAll([], notice())).resolves.toBeUndefined();
+  });
 });
 
 describe('createSubmissionNotifiers', () => {
@@ -131,6 +166,26 @@ describe('createSubmissionNotifiers', () => {
         WB_NOTIFY_EMAIL_FROM: 'site@b.com',
       }).map((n) => n.name),
     ).toEqual(['slack', 'email']);
+  });
+
+  it('needs both a key and somewhere to send, not either', () => {
+    /**
+     * `&&`, and the `||` version fails in the two directions this cannot
+     * tolerate: a key with no recipients builds a notifier that sends every
+     * submission to nobody, and recipients with no key builds one that throws
+     * on every submission — best-effort, so silently, for ever.
+     *
+     * An empty `WB_NOTIFY_EMAIL_TO`, and one holding only commas and spaces,
+     * are the same thing after parsing and are the realistic way to arrive
+     * here: a variable set and then emptied.
+     */
+    const withEmail = (over: Record<string, string>) =>
+      createSubmissionNotifiers({ WB_NOTIFY_EMAIL_FROM: 'site@b.com', ...over }).map((n) => n.name);
+
+    expect(withEmail({ RESEND_API_KEY: 'k' })).toEqual([]);
+    expect(withEmail({ RESEND_API_KEY: 'k', WB_NOTIFY_EMAIL_TO: ' , ' })).toEqual([]);
+    expect(withEmail({ WB_NOTIFY_EMAIL_TO: 'a@b.com' })).toEqual([]);
+    expect(withEmail({ RESEND_API_KEY: 'k', WB_NOTIFY_EMAIL_TO: 'a@b.com' })).toEqual(['email']);
   });
 
   it('refuses to build an email notifier with no verified sender', () => {

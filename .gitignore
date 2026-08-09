@@ -7,3 +7,6 @@ e2e/test-results/
 e2e/playwright-report/
 e2e/screenshots/
 .vercel/
+
+# The mutation sweeper's in-flight marker (scripts/mutate.mjs).
+.mutate-in-flight
