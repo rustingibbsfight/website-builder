@@ -1,15 +1,86 @@
-/** Thin HTTP client for ComfyStudio's image service — the other agent's hands. */
+/**
+ * Thin HTTP client for ComfyStudio's image service — the other agent's hands.
+ *
+ * **The vocabulary is not written down here, on purpose.** `purpose` used to be
+ * a union of six literals and `aspect` a union of five, copied from
+ * ComfyStudio's `lib/serve/spec.ts` at the time this was written. That is the
+ * failure the studio's guidance endpoint exists to stop, and this file was
+ * already suffering it: the studio grew `width`, `height`, `media`, `seconds`
+ * and `brand`, and none of them could be sent from here, because a type written
+ * months ago does not know about them.
+ *
+ * A copied enum has two ways to be wrong and no way to be right for long. Too
+ * narrow, and a value the studio accepts is unreachable — the feature ships and
+ * nothing calls it. Too wide, and the caller sends something rejected at the far
+ * end, which surfaces as a missing image on somebody's website.
+ *
+ * So these are **strings**, the studio validates them, and `guidance()` is how
+ * the agent finds out what is currently valid. A rejected value comes back as
+ * the studio's own error, which names the whole accepted list — so even a guess
+ * self-corrects in one round trip rather than needing a deploy here.
+ */
 
 export interface ImageSpec {
-  purpose: 'hero' | 'section' | 'card' | 'background' | 'icon' | 'portrait';
+  /** Where on the page. `guidance()` lists what is accepted. */
+  purpose: string;
   subject: string;
   mood?: string;
   palette?: string[];
-  aspect?: '16/9' | '4/3' | '1/1' | '3/4' | '21/9';
+  aspect?: string;
   minWidth?: number;
-  textSafe?: 'none' | 'left' | 'right' | 'top' | 'bottom' | 'centre';
+  /**
+   * The exact canvas, when the layout already knows it.
+   *
+   * The reason this matters here specifically: this *is* the caller that lays
+   * pages out. A builder holding a 1440x480 slot and only able to say "16/9, at
+   * least 1280 wide" is doing a conversion it can get wrong, and getting it
+   * wrong looks like a picture that does not fit rather than like an error.
+   */
+  width?: number;
+  height?: number;
+  media?: string;
+  seconds?: number;
+  /** A kit sent to `/api/serve/brands`, so the ninth picture matches the first. */
+  brand?: string;
+  textSafe?: string;
   avoid?: string[];
   count?: number;
+}
+
+/**
+ * What the studio currently accepts, fetched rather than remembered.
+ *
+ * Deliberately typed loosely. Narrowing `purposes` to a union here would
+ * reintroduce the copy one level up — the point is that this repo does not know
+ * the list, and a type that claims to know it is a claim that goes stale.
+ */
+export interface Guidance {
+  version: number;
+  request: {
+    endpoint: string;
+    purposes: string[];
+    aspects: string[];
+    textSafe: string[];
+    media: string[];
+    limits: { maxCount: number; maxEdge: number; maxVideoEdge: number; maxSeconds: number };
+    fields: { name: string; required: boolean; note: string }[];
+  };
+  ontology: { kind: string; label: string; hint: string }[];
+  brands: { endpoint: string; note: string; known: string[] };
+}
+
+export interface BrandKit {
+  name: string;
+  description: string;
+  palette?: string[];
+  voice?: string[];
+  avoid?: string[];
+}
+
+export interface SavedBrand {
+  brand: string;
+  tag: string;
+  snippets: { name: string; kind: string }[];
 }
 
 export interface Ticket {
@@ -70,6 +141,44 @@ async function studioRequest<T>(method: string, path: string, body?: unknown): P
 }
 
 export const askForImage = (spec: ImageSpec) => studioRequest<Ticket>('POST', '/api/serve/images', spec);
+
+/**
+ * The contract, asked for.
+ *
+ * Cached for a minute, and the number is the whole of the reasoning: an agent
+ * building one page may ask three times in a row, and three identical round
+ * trips to another deployment is latency spent on an answer that cannot have
+ * changed. A minute is also short enough that a studio deploy is picked up
+ * within the same session somebody notices it in.
+ *
+ * A stale entry is served if the refetch fails. Guidance that is sixty seconds
+ * old is a far better answer than an exception, because the alternative is the
+ * agent falling back to guessing — which is the thing this replaced.
+ */
+let cached: { at: number; value: Guidance } | null = null;
+export const GUIDANCE_TTL_MS = 60_000;
+
+export async function guidance(now: () => number = Date.now): Promise<Guidance> {
+  if (cached && now() - cached.at < GUIDANCE_TTL_MS) return cached.value;
+  try {
+    const value = await studioRequest<Guidance>('GET', '/api/serve/guidance');
+    cached = { at: now(), value };
+    return value;
+  } catch (error) {
+    if (cached) return cached.value;
+    throw error;
+  }
+}
+
+/** Only for tests, and named so that is obvious at the call site. */
+export function forgetGuidance(): void {
+  cached = null;
+}
+
+export const sendBrandKit = (kit: BrandKit) =>
+  studioRequest<SavedBrand>('POST', '/api/serve/brands', kit);
+
+export const listBrands = () => studioRequest<{ brands: string[] }>('GET', '/api/serve/brands');
 
 export const readTicket = (ticket: string) =>
   studioRequest<Ticket>('GET', `/api/serve/images/${encodeURIComponent(ticket)}`);

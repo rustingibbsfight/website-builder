@@ -341,12 +341,22 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
       schema: {
         params: SiteIdParams,
         body: z
-          .object({ slug: z.string(), title: z.string().min(1), tree: NodeInputSchema.optional() })
+          .object({
+            slug: z.string(),
+            title: z.string().min(1),
+            tree: NodeInputSchema.optional(),
+            // Taken at creation so a page arrives whole. The create-then-PATCH
+            // shape it replaces could half-finish, leaving a page with no meta
+            // description and nothing recording that one was wanted.
+            meta: PageMetaSchema.partial().optional(),
+          })
           .strict(),
       },
     },
     async (req, reply) =>
-      reply.status(201).send(await core.addPage(req.params.siteId, req.body.slug, req.body.title, req.body.tree)),
+      reply
+        .status(201)
+        .send(await core.addPage(req.params.siteId, req.body.slug, req.body.title, req.body.tree, req.body.meta)),
   );
 
   app.get('/sites/:siteId/pages', { schema: { params: SiteIdParams } }, async (req) =>
@@ -408,10 +418,26 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
       // async storage put completes — losing the asset.
       return reply.status(201).send(await core.addAsset(siteId, file.filename, file.mimetype, buf));
     }
+    // Three ways to say what the bytes are: multipart (above), base64, or a
+    // URL for the server to fetch. The URL shape exists so a *client* never
+    // has to fetch a stranger's address itself — Eve used to, with its own
+    // copy of the SSRF guard and its own byte cap. One implementation lives in
+    // core; this is how the callers that aren't in-process reach it.
     const body = z
-      .object({ filename: z.string().min(1), mime: z.string().min(1), base64: z.string().min(1) })
-      .strict()
+      .union([
+        z
+          .object({ filename: z.string().min(1), mime: z.string().min(1), base64: z.string().min(1) })
+          .strict(),
+        z
+          .object({ filename: z.string().min(1), url: z.string().min(1), mime: z.string().min(1).optional() })
+          .strict(),
+      ])
       .parse(req.body);
+    if ('url' in body) {
+      return reply
+        .status(201)
+        .send(await core.addAssetFromUrl(siteId, body.filename, body.url, body.mime ? { mime: body.mime } : {}));
+    }
     return reply
       .status(201)
       .send(await core.addAsset(siteId, body.filename, body.mime, Buffer.from(body.base64, 'base64')));

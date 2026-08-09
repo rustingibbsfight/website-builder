@@ -256,4 +256,59 @@ describe('input validation hardening', () => {
     });
     expect(res.statusCode).toBe(201);
   });
+
+  /**
+   * The URL body shape exists so no client has to fetch a stranger's address
+   * itself. That moves the SSRF guard behind this route, so the route is where
+   * it has to be proven — and it must answer as a *client* error naming the
+   * reason, not as an opaque 500 that reads like the server broke.
+   */
+  it('refuses an internal address on the URL asset shape, as a client error naming why', async () => {
+    const siteId = await makeSite();
+    // A template site arrives with assets of its own, so the property is that
+    // the count is unchanged — not that it is zero.
+    const before = ((await app.inject({ url: `/sites/${siteId}/assets` })).json() as unknown[]).length;
+    for (const url of [
+      'http://169.254.169.254/latest/meta-data/',
+      'http://127.0.0.1:9200/',
+      'http://localhost/secret.png',
+      'file:///etc/passwd',
+    ]) {
+      const res = await app.inject({
+        method: 'POST',
+        url: `/sites/${siteId}/assets`,
+        payload: { filename: 'x.png', url },
+      });
+      expect(res.statusCode, url).toBe(422);
+      expect((res.json() as { error: string }).error, url).toMatch(/refus|allow|invalid|private|local/i);
+    }
+    // Nothing was written on the way to refusing.
+    expect((await app.inject({ url: `/sites/${siteId}/assets` })).json()).toHaveLength(before);
+  });
+
+  /**
+   * A page arrives whole. The create-then-PATCH shape this replaces could
+   * half-finish — a failed second call left a page with no meta description
+   * and nothing recording that one had been wanted.
+   */
+  it('creates a page with its meta in one request', async () => {
+    const siteId = await makeSite();
+    const res = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteId}/pages`,
+      payload: { slug: 'pricing', title: 'Pricing', meta: { description: 'What it costs.' } },
+    });
+    expect(res.statusCode).toBe(201);
+    expect((res.json() as { meta: { description?: string } }).meta.description).toBe('What it costs.');
+  });
+
+  it('refuses a body that names neither bytes nor a url', async () => {
+    const siteId = await makeSite();
+    const res = await app.inject({
+      method: 'POST',
+      url: `/sites/${siteId}/assets`,
+      payload: { filename: 'x.png' },
+    });
+    expect(res.statusCode).toBe(422);
+  });
 });

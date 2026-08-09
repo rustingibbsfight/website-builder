@@ -17,7 +17,12 @@ agent/
   channels/slack.ts    # Slack channel (Vercel Connect credentials)
   channels/eve.ts      # HTTP/dev-REPL channel
 lib/wb.ts              # wb REST client (WB_API_URL + WB_API_TOKEN bearer)
-lib/studio.ts          # ComfyStudio image client (STUDIO_API_URL + STUDIO_API_KEY bearer)
+lib/studio.ts          # ComfyStudio client (STUDIO_API_URL + STUDIO_API_KEY bearer).
+                       #   Holds no copy of the studio's vocabulary: purposes,
+                       #   aspects and the library categories are fetched from
+                       #   /api/serve/guidance and cached for a minute, because
+                       #   a copied enum goes stale and fails closed and silently.
+                       #   `lib/vocabulary.test.ts` reads the source to keep it so.
 ```
 
 ## Setup
