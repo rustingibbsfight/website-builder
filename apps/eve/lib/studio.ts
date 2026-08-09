@@ -197,28 +197,53 @@ export function nextDelay(attempt: number): number {
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * Ask, then wait for the picture — up to `budgetMs`.
+ * How long a *poll* may wait before answering.
+ *
+ * Bounded well under any serverless budget, and that is the whole of the
+ * number. It exists to save model calls, not to wait out a render: at ten
+ * seconds a picture that is nearly done comes back on this call instead of
+ * costing another turn, and one that is not simply reports that it is not.
+ */
+export const POLL_BUDGET_MS = 10_000;
+
+/**
+ * Ask about an existing ticket until it settles, or until the budget is spent.
+ *
+ * This replaced `requestAndWait`, which did the submit *and* the waiting in one
+ * call with a 150-second budget. The latency was the least of it.
+ *
+ * **The ticket is the receipt for a spend, and it has to reach the transcript
+ * before anything waits on it.** A submit that then blocks for 150 seconds is
+ * holding the only copy of that id inside a call the platform can kill —
+ * `apps/eve` has no `vercel.json`, so its `maxDuration` is whatever the
+ * platform defaults to, and it is nowhere near 150 seconds. When that call
+ * died, the render was already submitted and paid for and the id existed
+ * nowhere the agent could see. A paid-for picture nobody can collect.
+ *
+ * It is the shape ComfyStudio states as *"the record that owns the spending is
+ * written before it"*, arriving from the caller's side: `request_image` now
+ * returns the ticket the moment it has one, and waiting is this function's job,
+ * on a later call, once the id is safely written down.
  *
  * Returns whatever the ticket says when the budget runs out rather than
- * throwing, because a ticket that is still running is not a failure: the render
- * is still coming and the id is how to collect it. A tool that threw here would
- * lose the id and leave a paid-for render unreachable.
+ * throwing, for the same reason it always did: still running is not a failure,
+ * and the id is how to collect it.
  */
-export async function requestAndWait(
-  spec: ImageSpec,
-  budgetMs: number,
+export async function pollUntil(
+  ticketId: string,
+  budgetMs: number = POLL_BUDGET_MS,
   now: () => number = Date.now,
   wait: (ms: number) => Promise<unknown> = sleep,
 ): Promise<Ticket> {
   const started = now();
-  let ticket = await askForImage(spec);
+  let ticket = await readTicket(ticketId);
 
   for (let attempt = 0; ticket.status === 'running'; attempt += 1) {
     const left = budgetMs - (now() - started);
     const delay = nextDelay(attempt);
     if (left <= delay) return ticket;
     await wait(delay);
-    ticket = await readTicket(ticket.ticket);
+    ticket = await readTicket(ticketId);
   }
   return ticket;
 }
