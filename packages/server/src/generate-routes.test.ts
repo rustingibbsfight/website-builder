@@ -65,8 +65,8 @@ afterEach(async () => {
   rmSync(dataDir, { recursive: true, force: true });
 });
 
-const start = (payload: unknown) =>
-  app.inject({ method: 'POST', url: `/sites/${siteId}/assets/generate`, payload });
+const start = async (payload: Record<string, unknown>) =>
+  await app.inject({ method: 'POST', url: `/sites/${siteId}/assets/generate`, payload });
 
 describe('starting a request', () => {
   it('answers 202 with the ticket rather than waiting for the picture', async () => {

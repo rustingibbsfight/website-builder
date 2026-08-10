@@ -57,7 +57,7 @@ import { createPublishTarget, type PublishTarget } from './publish-target.js';
 import { createAssetStorage, type AssetStorage } from './storage.js';
 import { createVersionControl, type VersionControl, type VersionControlResult } from './version-control.js';
 import { AssetStore, BuildStore, PageStore, SiteStore, SubmissionStore, ChatSessionStore, ImageTicketStore, type BuildRecord, type ImageTicketRecord, type SubmissionRecord } from './stores.js';
-import { createImageStudio, type ImageSpec, type ImageStudio } from './studio.js';
+import { createImageStudio, type BrandKit, type Guidance, type ImageSpec, type ImageStudio, type SavedBrand } from './studio.js';
 
 /** Per-site cap on captured form submissions — the endpoint is public, so this
  *  bounds storage abuse. Generous for a real form, far below flood volume. */
@@ -934,6 +934,20 @@ export class WbCore {
   async listSiteImageTickets(siteId: string): Promise<ImageTicketRecord[]> {
     await this.getSite(siteId);
     return this.imageTickets.listRunning(siteId);
+  }
+
+  /** What the studio currently accepts. Cached there, not here. */
+  imageGuidance(): Promise<Guidance> {
+    return this.requireStudio().guidance();
+  }
+
+  /** File a brand kit with the studio, so the ninth picture matches the first. */
+  saveImageBrand(kit: BrandKit): Promise<SavedBrand> {
+    return this.requireStudio().sendBrandKit(kit);
+  }
+
+  listImageBrands(): Promise<{ brands: string[] }> {
+    return this.requireStudio().listBrands();
   }
 
   private requireStudio(): ImageStudio {

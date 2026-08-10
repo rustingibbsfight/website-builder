@@ -1,29 +1,35 @@
 import { defineTool } from 'eve/tools';
 import { z } from 'zod';
 
-import { askForImage, nextDelay } from '../../lib/studio';
+import { wbPost } from '../../lib/wb';
 
 /**
- * Ask ComfyStudio for a picture.
+ * Ask for a picture for a page, and get it as an asset of that site.
  *
- * Deliberately says nothing about how images are made. You describe what the
- * *page* needs and the studio's own agent chooses the model, the workflow and
- * the prompt — which is what keeps this tool working when it changes any of
- * them. There is no field here for a workflow, a checkpoint or a prompt, and
- * one should not be added: an integration that names a workflow breaks the
- * first time that workflow is republished.
+ * Two things changed when this moved onto the wb API, and both are the point
+ * rather than plumbing.
  *
- * **And it no longer names the values either.** `purpose` was a `z.enum` of six
- * literals and `aspect` one of five, copied from the studio. That is the same
- * mistake one level down: the studio grew `width`, `height`, `media`, `seconds`
- * and `brand`, and this schema could not express any of them — a feature
- * shipped at one end and unreachable from the other.
+ * **It names a site, and the picture lands in it.** Before, this returned URLs
+ * on ComfyStudio's storage and the model had to remember to call `add_asset`
+ * afterwards — two steps, of which the second was skippable, so a page could
+ * end up pointing at a picture on somebody else's deployment. Publishing that
+ * site then depended on that deployment staying up. One call now, and the
+ * assetId comes back.
  *
- * A zod enum here would also be the *worst* place to hold the list, because it
- * fails closed and silently: the model never sees the seventh purpose, so it
- * never asks for it, so nobody notices. Strings plus `image_guidance` fails the
- * other way — a wrong value comes back as the studio's own error naming the
- * whole accepted list, which the model can act on in the same turn.
+ * **The studio credential is no longer here.** This app used to hold its own
+ * `STUDIO_API_KEY`, which is a second place a key leaks from and a second place
+ * it has to be rotated — for no gain, since nothing this app does with it needs
+ * the key rather than the answer. wb-api holds it, along with the ticket store
+ * and the ingest guard.
+ *
+ * **The vocabulary is still not written down here.** `purpose` was once a
+ * `z.enum` of six literals and `aspect` one of five, copied from the studio;
+ * the studio then grew five request fields that could not be sent from here at
+ * all. A copied enum fails closed and silently — the model never sees the
+ * seventh purpose, so it never asks for it, so nobody notices. Strings plus
+ * `image_guidance` fails the other way: a wrong value comes back as the
+ * studio's own error naming the whole accepted list, which the model can act on
+ * in the same turn.
  */
 
 /**
@@ -32,27 +38,22 @@ import { askForImage, nextDelay } from '../../lib/studio';
  * This used to submit and then poll for up to 150 seconds inside one tool call.
  * The ticket is the **receipt for a spend**, and holding the only copy of it
  * inside a call the platform can kill means a render that was submitted and
- * paid for and whose id exists nowhere the agent can see. `apps/eve` has no
+ * paid for and whose id exists nowhere anybody can see. `apps/eve` has no
  * `vercel.json`, so its `maxDuration` is the platform default — nowhere near
  * 150 seconds — which made that the likely outcome rather than the unlucky one.
  *
- * It also made the editor's chat panel look frozen: a turn that emits no events
- * for two and a half minutes is indistinguishable from a stuck one, and the
- * panel now has somebody watching it.
- *
- * So the ticket comes back immediately and `image_status` does the waiting, on
- * a later call, once the id is safely written into the transcript. The cost is
- * one extra model call on a render that would have landed inside the old
- * window; the thing bought is that no render is ever unreachable.
+ * The ticket is now durable on the wb side too, so even losing this transcript
+ * does not strand a render: the site's open tickets can be listed.
  */
 
 export default defineTool({
   description:
-    'Ask the ComfyStudio image agent to make an original image or clip for a page. Describe what the page ' +
-    'needs — purpose, subject, mood, palette, the exact slot size, where a headline will sit — not how to ' +
-    'make it. Call image_guidance first if you are unsure what a field accepts; the accepted values live in ' +
-    'ComfyStudio and change there. Returns URLs and alt text. If it is still rendering, call image_status.',
+    'Ask for an original image or clip for a page, and add it to that site as an asset. Describe what the ' +
+    'page needs — purpose, subject, mood, the exact slot size, where a headline will sit — not how to make ' +
+    'it. Call image_guidance first if you are unsure what a field accepts. The palette defaults to the ' +
+    "site's own theme. Returns a ticket; call image_status with it to collect the finished picture.",
   inputSchema: z.object({
+    siteId: z.string().describe('The site the picture is for. It becomes an asset of this site.'),
     purpose: z
       .string()
       .describe('What the image is for on the page, e.g. hero. image_guidance lists what is accepted.'),
@@ -61,7 +62,7 @@ export default defineTool({
     palette: z
       .array(z.string())
       .optional()
-      .describe("The site's colours as hex, so the picture belongs to the page it lands on."),
+      .describe("Hex colours. Leave it out to use the site's own theme, which is usually what you want."),
     aspect: z.string().optional().describe('Shape, when you have not laid the slot out yet. e.g. 16/9.'),
     width: z
       .number()
@@ -82,35 +83,19 @@ export default defineTool({
     avoid: z.array(z.string()).optional().describe('e.g. ["people", "text", "logos"].'),
     count: z.number().int().min(1).max(4).optional().describe('How many to choose between. Defaults to 1.'),
   }),
-  async execute(spec) {
-    const ticket = await askForImage(spec);
-
-    if (ticket.status === 'failed') {
-      throw new Error(ticket.error ?? 'ComfyStudio could not make that image.');
-    }
+  async execute({ siteId, ...spec }) {
+    const ticket = await wbPost<{ id: string; status: string }>(
+      `/sites/${encodeURIComponent(siteId)}/assets/generate`,
+      spec,
+    );
 
     return {
       status: ticket.status,
-      ticket: ticket.ticket,
-      images: ticket.images,
-      // Straight into the <img>. A picture with no alt is this integration
-      // quietly making the site worse.
-      alt: ticket.alt,
-      // What the studio's agent had to decide that the brief did not cover —
-      // how a wrong picture is diagnosable without reading its transcript.
-      assumptions: ticket.assumptions,
-      ...(ticket.status === 'running'
-        ? {
-            // Told when to come back, so the first poll is not instant. Asking
-            // is what advances it, but asking a hundred times in a row is a
-            // hundred model calls that all say "still running".
-            retryAfterMs: nextDelay(0),
-            note:
-              `Submitted and paid for (${ticket.pending} rendering). Call image_status with ticket ` +
-              `"${ticket.ticket}" in a few seconds — it waits a little on your behalf. Do not discard ` +
-              `the ticket: it is the only way to collect this render.`,
-          }
-        : {}),
+      ticket: ticket.id,
+      note:
+        `Submitted and paid for. Call image_status with ticket "${ticket.id}" and siteId "${siteId}" in a ` +
+        'few seconds — asking is what advances it. Do not discard the ticket: it is how this render is ' +
+        'collected, and asking again later costs nothing because it is already paid for.',
     };
   },
 });

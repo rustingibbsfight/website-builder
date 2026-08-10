@@ -1,7 +1,14 @@
 import { defineTool } from 'eve/tools';
 import { z } from 'zod';
 
-import { listBrands, sendBrandKit } from '../../lib/studio';
+/** What the studio filed the kit as. Its shape, relayed by wb-api. */
+interface SavedBrand {
+  brand: string;
+  tag: string;
+  snippets: { name: string; kind: string }[];
+}
+
+import { wbGet, wbPost } from '../../lib/wb';
 
 /**
  * Teach ComfyStudio a brand, once, so every later picture matches.
@@ -61,13 +68,13 @@ export default defineTool({
     // rather than a malformed write, because "which brands are there" is the
     // thing somebody asks first and there is no reason to make it a second tool.
     if (!input.name && !input.description) {
-      return { brands: (await listBrands()).brands };
+      return { brands: (await wbGet<{ brands: string[] }>('/images/brands')).brands };
     }
     if (!input.name || !input.description) {
       throw new Error('A brand kit needs both a name and a description, or neither to list what exists.');
     }
 
-    const saved = await sendBrandKit({
+    const saved = await wbPost<SavedBrand>('/images/brands', {
       name: input.name,
       description: input.description,
       ...(input.palette?.length ? { palette: input.palette } : {}),

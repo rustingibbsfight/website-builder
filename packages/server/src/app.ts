@@ -511,6 +511,38 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
    * already paid for. The ticket is durable, so a closed tab strands nothing:
    * `GET /assets/generate` lists what is still in flight.
    */
+  /**
+   * The studio's own vocabulary and brand kits, relayed.
+   *
+   * Not site-scoped, because neither is about a site: guidance is what the
+   * studio currently accepts, and a brand kit is filed under a name there. They
+   * are here so that **only this deployment holds the studio credential**. Eve
+   * used to hold its own copy of `STUDIO_API_KEY`, which is a second place a
+   * key can leak from and a second place it has to be rotated — and no part of
+   * what Eve does with it needs the key rather than the answer.
+   */
+  app.get('/images/guidance', async () => core.imageGuidance());
+
+  app.get('/images/brands', async () => core.listImageBrands());
+
+  app.post(
+    '/images/brands',
+    {
+      schema: {
+        body: z
+          .object({
+            name: z.string().min(1),
+            description: z.string().min(1),
+            palette: z.array(z.string()).optional(),
+            voice: z.array(z.string()).optional(),
+            avoid: z.array(z.string()).optional(),
+          })
+          .strict(),
+      },
+    },
+    async (req) => core.saveImageBrand(req.body),
+  );
+
   app.post(
     '/sites/:siteId/assets/generate',
     { schema: { params: SiteIdParams, body: ImageSpecSchema } },

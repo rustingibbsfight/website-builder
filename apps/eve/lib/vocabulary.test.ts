@@ -47,19 +47,14 @@ describe('no copy of the studio vocabulary', () => {
     }
   });
 
-  it('keeps the client type open', () => {
-    const source = read('lib/studio.ts');
-    const spec = source.slice(source.indexOf('export interface ImageSpec'), source.indexOf('export interface Guidance'));
-
-    for (const field of THEIRS) {
-      const union = new RegExp(`${field}\\??:\\s*'[^;]*'\\s*\\|`);
-      expect(
-        union.test(spec),
-        `${field} is a union of literals again. It is erased at runtime, so no other test here can see it — ` +
-          `which is why this one reads the source.`,
-      ).toBe(false);
-    }
-  });
+  /**
+   * The client type used to live at `lib/studio.ts` and is now
+   * `ImageSpecSchema` in `@wb/schema`, shared by the route, MCP, this tool and
+   * the editor's picker. Its guard moved with it —
+   * `packages/schema/src/image-spec.test.ts` — rather than being read across a
+   * package boundary from here, which would break the day either package
+   * moved. Both halves still exist; only one of them is this file's.
+   */
 
   it('still narrows what is genuinely ours', () => {
     /**
