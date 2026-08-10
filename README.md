@@ -97,7 +97,9 @@ Highlights (full spec in `/openapi.json`):
 - `GET /components` / `GET /components/:type` — discovery with JSON Schemas
 - `POST /sites/:id/pages/:pageId/tree/ops` — atomic `TreeOp[]` batch (insert/update/move/remove/replace); on failure returns 422 with the failing op index
 - `PUT  /sites/:id/pages/:pageId/tree` — whole-tree replace (bulk generation)
-- `POST /sites/:id/assets` — multipart file or JSON `{filename, mime, base64}`
+- `POST /sites/:id/assets` — multipart file or JSON `{filename, mime, base64}` (or `{filename, url}`, fetched server-side through one SSRF-guarded path)
+- `POST /sites/:id/assets/generate` → 202 + ticket, `GET …/generate/:ticket` collects — an original picture from an image studio, ingested as an asset of the site. The ticket is a receipt for a render already paid for, which is why nothing waits on it inline. Optional: without `STUDIO_API_URL`/`STUDIO_API_KEY` these answer 501 and everything else works
+- `POST /sites/:id/chat` → 202 + session, `GET …/chat?since=N` replays from a cursor — the editor's conversation with Eve, relayed
 - `POST /sites/:id/publish` → dist path + lint warnings, `POST /sites/:id/deploy`
 - `GET  /preview/:siteId/…` — live draft preview (no publish needed)
 
@@ -226,15 +228,22 @@ The editor is a React app mounted on the same REST API agents use — every edit
 - **Canvas** — the live preview in an iframe; click any element to select it (hover/selection outlines come from an editor-only script injected into the preview, never published). **Double-click a heading, paragraph, or button to edit its text inline, right on the canvas** — Enter or click-away commits, Esc cancels; every edit is an undoable tree op.
 - **Palette** — drag a component onto the canvas (a drop indicator shows the exact insertion point, computed by hit-testing real rendered layout) or double-click to insert into the selected container.
 - **Outline** — the page tree; drag rows to reorder or nest, click to select.
-- **Inspector** — props form auto-generated from each component's JSON Schema, plus layout (direction/gap/padding/align/columns/max-width), style tokens, and per-breakpoint visibility.
+- **Inspector** — props form auto-generated from each component's JSON Schema, plus layout (direction/gap/padding/align/columns/max-width), style tokens, and per-breakpoint visibility. Any image prop gets a **picker** rather than raw id/url boxes: choose one this site already has, name one by URL, or generate an original — recognised by the shape of the schema, so every component's picture field gets it without the editor knowing the component exists.
+- **Chat** — a panel beside the page. Ask Eve to change something and the canvas reloads itself; ⌘Z undoes *the agent's* last edit, and your own history survives beneath it. The conversation belongs to the site rather than to the tab, so a reload, a second tab and another machine all resume it.
 - **Theme** — brand colors, font stacks, rounding; the whole site restyles live.
 - Undo/redo (⌘Z/⌘⇧Z), viewport toggle (desktop/tablet/mobile), one-click publish.
 
-## Eve — the Slack bot
+## Eve — in Slack and in the editor
 
-`apps/eve` is a [Vercel eve](https://eve.dev)-framework agent (the same pattern as the clinic's weekly-rx-form agent): mention `@eve` and Claude drives the wb REST API through typed tools — *"spin up a Breakthrough Medical site with primary color #0e7c66 and ship it"* becomes a threaded Slack conversation that ends with a live URL. Slack credentials are provisioned by Vercel Connect (`vercel connect create slack`) and the model runs via Vercel AI Gateway — no Slack app config, no API keys to manage. Setup in [apps/eve/README.md](apps/eve/README.md).
+`apps/eve` is a [Vercel eve](https://eve.dev)-framework agent: Claude drives the wb REST API through typed tools, so *"spin up a Breakthrough Medical site with primary color #0e7c66 and ship it"* becomes a conversation that ends with a live URL.
+
+Two ways in, one agent. **Slack** — mention `@eve`; credentials are provisioned by Vercel Connect (`vercel connect create slack`) and the model runs via Vercel AI Gateway, so there is no Slack app config and no API keys to manage. **The editor's chat panel** — the same agent over the same durable session, relayed through wb-api on the browser's own origin, so nothing about eve's channel auth is involved.
+
+Setup in [apps/eve/README.md](apps/eve/README.md).
 
 ## Roadmap
 
-- Responsive per-breakpoint overrides UI in the editor (engine already supports them).
-- More templates; Postgres store option.
+- More templates. Three starters ship (`saas-landing`, `local-service`, `portfolio`) alongside the flagship `breakthrough-medical`; an `event` starter is named in #9 and not built.
+- Postgres store option — SQLite/libSQL/Turso only today.
+- Direct-manipulation canvas: on-canvas spacing handles and in-grid column resize (#25).
+- Responsive image variants, so a real `srcset` is possible (#28). The ingest path is where widths would be generated.
