@@ -142,3 +142,32 @@ export interface SiteChanged {
   theme: boolean;
   assets: boolean;
 }
+
+export interface Asset {
+  id: string;
+  siteId: string;
+  filename: string;
+  mime: string;
+  width?: number;
+  height?: number;
+  path: string;
+}
+
+/**
+ * A picture that was asked for and paid for.
+ *
+ * `running` is the ordinary state and not a problem: the render is already
+ * bought, and the ticket is durable on the server, so closing the panel strands
+ * nothing — reopening lists what is still in flight.
+ */
+export interface ImageTicket {
+  id: string;
+  siteId: string;
+  status: 'running' | 'ready' | 'failed';
+  spec: Record<string, unknown>;
+  assetIds?: string[];
+  alt?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+}
