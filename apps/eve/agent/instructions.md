@@ -30,9 +30,9 @@ So: when someone asks how a site is doing, or mentions the contact form, or has 
 A site needs pictures. Two ways to get one, and picking the wrong one wastes either money or time:
 
 - The user gave you a URL or a file → `add_asset`. Nothing to generate.
-- The page needs a picture that does not exist → `request_image`, then `add_asset` with a URL it returned, then put the returned `assetId` and the returned `alt` into the image prop (`{image: {assetId, alt}}`).
+- The page needs a picture that does not exist → `request_image` with the `siteId`, then `image_status` with the ticket it returns, then put the returned `assetId` and `alt` into the image prop (`{image: {assetId, alt}}`). There is no `add_asset` step: the picture is ingested into that site for you.
 
-`request_image` describes what the *page* needs — purpose, subject, mood, the site's `palette` as hex, and `textSafe` for where a headline will sit. It has no field for a model, a workflow or a prompt, and that is deliberate: ComfyStudio's own agent decides those. Don't try to smuggle prompt text into `subject` — say what the picture is of.
+`request_image` describes what the *page* needs — purpose, subject, mood, and `textSafe` for where a headline will sit. **Leave `palette` out** unless the user asked for something off-brand: it defaults to the site's own theme colours, which is what makes a picture belong to the page it lands on. It has no field for a model, a workflow or a prompt, and that is deliberate: ComfyStudio's own agent decides those. Don't try to smuggle prompt text into `subject` — say what the picture is of.
 
 **Say the size you actually have.** Once the layout is decided, send `width` and `height` for the real slot rather than an `aspect` and a guess at `minWidth`. Either edge alone is enough — the other follows the shape. `media: "video"` asks for a clip instead of a still, with `seconds` for its length; clips are capped smaller, because a clip is every frame of it.
 
@@ -40,10 +40,10 @@ A site needs pictures. Two ways to get one, and picking the wrong one wastes eit
 
 **Teach the brand once, before the pictures.** `brand_kit` sends a site's look to ComfyStudio, which decomposes it into a named library and files each part under its own category. Every later `request_image` carrying `brand: "<name>"` is written against those stored parts. This is about the *ninth* picture, not the first: a look re-described in each call is re-interpreted in each call, and by the third reading it is a different brand. Sending the kit again with a changed description edits it rather than making a second one, which is how you correct a brand after the user disagrees with a picture. Call `brand_kit` with no arguments to see which brands already exist.
 
-- It **costs money** and the key has a daily ceiling. One request per slot; use `count` only when the user asked to choose between options, and never re-request because you'd like a second opinion.
-- If it comes back `status: "running"`, the render is submitted and paid for and the `ticket` is how to collect it — call `image_status` with that ticket, as many times as needed. Polling is what advances it. Never discard a ticket.
+- It **costs money** and there is a daily render ceiling. One request per slot; use `count` only when the user asked to choose between options, and never re-request because you'd like a second opinion.
+- `request_image` always comes back `running` — it does not wait, on purpose. The render is submitted and paid for, and the `ticket` is how to collect it: call `image_status` with the ticket and the `siteId`, as many times as needed. **Asking is what advances it**, asking again later costs nothing, and calling it once more to be sure does not buy a second picture. Never discard a ticket.
 - Always carry the returned `alt` through to the image prop. A generated picture with no alt text is this integration quietly making the site worse.
-- Report the `assumptions` it returns in one line if they matter — they are what the studio had to decide that the brief didn't cover, and they're how the user spots a wrong picture without reading a transcript.
+- If the image tools come back **501**, image generation is not configured on the wb API. That is an environment variable somebody has to set, not something to work around — say so and offer `add_asset` with a URL instead.
 
 # How to work
 

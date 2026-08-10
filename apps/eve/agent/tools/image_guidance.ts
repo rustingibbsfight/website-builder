@@ -1,7 +1,20 @@
 import { defineTool } from 'eve/tools';
 import { z } from 'zod';
 
-import { guidance } from '../../lib/studio';
+/**
+ * Loosely typed on purpose. Narrowing `purposes` to a union here would
+ * reintroduce the copy this tool exists to remove: the list belongs to
+ * ComfyStudio and changes there, so a type claiming to know it is a claim that
+ * goes stale.
+ */
+interface Guidance {
+  version: number;
+  request: unknown;
+  ontology: unknown;
+  brands: unknown;
+}
+
+import { wbGet } from '../../lib/wb';
 
 /**
  * What ComfyStudio currently accepts, asked rather than assumed.
@@ -21,8 +34,9 @@ import { guidance } from '../../lib/studio';
  * hints are load-bearing, because `camera` and `style` are indistinguishable
  * from their names alone.
  *
- * Cheap and cached for a minute in `lib/studio.ts`, so calling it before a
- * batch of images costs one round trip rather than one per image.
+ * Cheap and cached for a minute inside wb-api, so calling it before a batch
+ * of images costs one round trip rather than one per image — and the studio
+ * credential stays on that side rather than being held here too.
  */
 export default defineTool({
   description:
@@ -32,7 +46,7 @@ export default defineTool({
     'lists live in ComfyStudio and change there, so this is the current answer rather than a remembered one.',
   inputSchema: z.object({}),
   async execute() {
-    const current = await guidance();
+    const current = await wbGet<Guidance>('/images/guidance');
     return {
       version: current.version,
       request: current.request,

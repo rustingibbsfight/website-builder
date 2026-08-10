@@ -1,53 +1,52 @@
 import { defineTool } from 'eve/tools';
 import { z } from 'zod';
 
-import { nextDelay, pollUntil } from '../../lib/studio';
+import { pollUntil } from '../../lib/tickets';
 
 /**
- * Ask again for a picture `request_image` did not finish waiting for.
+ * Collect a picture `request_image` started.
  *
- * Asking *is* what moves it along — ComfyStudio has no worker of its own, so a
+ * **Asking is what advances it** — the studio has no worker of its own, so a
  * ticket nobody polls never finishes. Nothing is lost by asking again later:
- * the render is already submitted and paid for.
+ * the render is already submitted and paid for, and the ticket is durable on
+ * the wb side, so even losing this conversation does not strand it.
  *
- * **This one may wait, where `request_image` may not.** The difference is not
- * politeness: by the time anybody calls this, the ticket id is written down in
- * the transcript, so a call the platform kills loses a few seconds rather than
- * losing a render. The budget is ten seconds — enough that a picture which is
- * nearly done comes back on this call instead of costing another turn, short
- * enough to sit inside any function budget.
+ * This call is where the picture becomes an **asset of the site**, so the
+ * assetId it returns is what goes into a page. Collecting twice is safe and
+ * cheap: a settled ticket answers from the stored row without re-fetching, so
+ * a model that asks once more to be sure does not buy or store a second copy.
  */
 export default defineTool({
   description:
-    'Check a ComfyStudio image request that was still rendering. Takes the ticket from request_image and ' +
-    'returns the image URLs once they are ready.',
+    'Check and collect an image request started by request_image. Returns the assetId once the picture is ' +
+    'ready — put that straight into an image prop as {image:{assetId, alt}}. Safe to call repeatedly: a ' +
+    'finished request answers from what was already collected.',
   inputSchema: z.object({
+    siteId: z.string().describe('The site the request was made for.'),
     ticket: z.string().describe('The ticket id returned by request_image.'),
-    attempt: z
-      .number()
-      .int()
-      .min(0)
-      .optional()
-      .describe('How many times you have already asked about this ticket. Pass back `nextAttempt`.'),
   }),
-  async execute({ ticket: id, attempt = 0 }) {
-    const ticket = await pollUntil(id);
-    if (ticket.status === 'failed') {
-      throw new Error(ticket.error ?? 'That image request failed.');
+  async execute({ siteId, ticket }) {
+    const result = await pollUntil(siteId, ticket);
+
+    if (result.status === 'failed') {
+      throw new Error(result.error ?? 'That image request failed.');
     }
+
     return {
-      status: ticket.status,
-      ticket: ticket.ticket,
-      images: ticket.images,
-      alt: ticket.alt,
-      assumptions: ticket.assumptions,
-      ...(ticket.status === 'running'
+      status: result.status,
+      ticket: result.id,
+      ...(result.assetIds ? { assetIds: result.assetIds } : {}),
+      // Straight into the <img>. A picture with no alt is this integration
+      // quietly making the site worse.
+      ...(result.alt ? { alt: result.alt } : {}),
+      ...(result.status === 'ready' && result.assetIds?.[0]
+        ? { use: { image: { assetId: result.assetIds[0], alt: result.alt ?? '<describe it>' } } }
+        : {}),
+      ...(result.status === 'running'
         ? {
-            // Backing off, so a slow render is not a hundred model calls that
-            // all say the same thing.
-            retryAfterMs: nextDelay(attempt + 1),
-            nextAttempt: attempt + 1,
-            note: `Still rendering (${ticket.pending} left). Ask again, and keep the ticket.`,
+            note:
+              'Still rendering. Ask again in a few seconds and keep the ticket — asking is what advances ' +
+              'it, and it is already paid for.',
           }
         : {}),
     };
