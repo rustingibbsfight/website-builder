@@ -52,11 +52,12 @@ import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { assetDir, distDir, openDb } from './db.js';
 import { EDITOR_PREVIEW_JS } from './editor-script.js';
-import { ConflictError, NotFoundError, ValidationError } from './errors.js';
+import { ConflictError, NotConfiguredError, NotFoundError, ValidationError } from './errors.js';
 import { createPublishTarget, type PublishTarget } from './publish-target.js';
 import { createAssetStorage, type AssetStorage } from './storage.js';
 import { createVersionControl, type VersionControl, type VersionControlResult } from './version-control.js';
-import { AssetStore, BuildStore, PageStore, SiteStore, SubmissionStore, ChatSessionStore, type BuildRecord, type SubmissionRecord } from './stores.js';
+import { AssetStore, BuildStore, PageStore, SiteStore, SubmissionStore, ChatSessionStore, ImageTicketStore, type BuildRecord, type ImageTicketRecord, type SubmissionRecord } from './stores.js';
+import { createImageStudio, type ImageSpec, type ImageStudio } from './studio.js';
 
 /** Per-site cap on captured form submissions — the endpoint is public, so this
  *  bounds storage abuse. Generous for a real form, far below flood volume. */
@@ -139,6 +140,13 @@ export interface WbCoreOptions {
   /** Where new submissions are announced. Defaults to env selection
    *  (WB_NOTIFY_SLACK_WEBHOOK, RESEND_API_KEY + WB_NOTIFY_EMAIL_*). */
   notifiers?: SubmissionNotifier[];
+  /**
+   * Where pictures come from. Defaults to env selection (STUDIO_API_URL +
+   * STUDIO_API_KEY), and `null` when neither is set — image generation is
+   * optional, and a deployment without it must start and serve exactly as
+   * before rather than failing at boot over a feature nobody asked for.
+   */
+  imageStudio?: ImageStudio | null;
 }
 
 export interface DeploySiteResult {
@@ -171,6 +179,9 @@ export class WbCore {
    */
   readonly chatSessions: ChatSessionStore;
 
+  /** Image requests in flight, and what became of them. */
+  readonly imageTickets: ImageTicketStore;
+
   private constructor(
     private db: Client,
     private storage: AssetStorage,
@@ -179,6 +190,7 @@ export class WbCore {
     dataDir: string,
     private publicUrl?: string,
     private notifiers: readonly SubmissionNotifier[] = [],
+    private imageStudio: ImageStudio | null = null,
   ) {
     this.dataDir = dataDir;
     this.sites = new SiteStore(db);
@@ -187,6 +199,7 @@ export class WbCore {
     this.builds = new BuildStore(db);
     this.submissions = new SubmissionStore(db);
     this.chatSessions = new ChatSessionStore(db);
+    this.imageTickets = new ImageTicketStore(db);
   }
 
   /** Open the database (local file or remote Turso), run migrations, wire storage. */
@@ -198,11 +211,16 @@ export class WbCore {
     const publicUrl = (opts.publicUrl ?? process.env.WB_PUBLIC_URL ?? '').replace(/\/$/, '') || undefined;
     if (publicUrl) await backfillFormEndpoint(db, publicUrl);
     const notifiers = opts.notifiers ?? createSubmissionNotifiers();
-    return new WbCore(db, storage, publishTarget, versionControl, opts.dataDir, publicUrl, notifiers);
+    const imageStudio = opts.imageStudio !== undefined ? opts.imageStudio : createImageStudio();
+    return new WbCore(db, storage, publishTarget, versionControl, opts.dataDir, publicUrl, notifiers, imageStudio);
   }
 
   hasPublishTarget(): boolean {
     return this.publishTarget !== null;
+  }
+
+  hasImageStudio(): boolean {
+    return this.imageStudio !== null;
   }
 
   hasVersionControl(): boolean {
@@ -769,6 +787,164 @@ export class WbCore {
     await this.storage.delete(siteId, asset.path);
   }
 
+  // ── Generated images ─────────────────────────────────────────────────────
+
+  /**
+   * Ask the studio for a picture for this site.
+   *
+   * Two things happen here that no caller should be trusted to remember, which
+   * is the reason this is a core method rather than a route calling a client.
+   *
+   * **The palette is defaulted from the site's theme.** A picture that does not
+   * belong to the page it lands on is the ordinary failure of generated
+   * imagery, and the colours are sitting right here. Doing it in the picker
+   * alone would mean Eve and MCP produced worse pictures than the editor for no
+   * reason anybody could see. A caller that names its own palette keeps it —
+   * "match the site" is the default, not the rule.
+   *
+   * **The ticket row is written before anything waits on it.** The studio has
+   * already queued and charged for the render by the time it answers; if the id
+   * lived only in the reply, a dropped connection would be a purchase nobody
+   * could collect. The row is the receipt.
+   */
+  async requestSiteImage(siteId: string, spec: ImageSpec): Promise<ImageTicketRecord> {
+    const studio = this.requireStudio();
+    const site = await this.getSite(siteId);
+
+    const withPalette: ImageSpec = {
+      ...spec,
+      palette: spec.palette?.length ? spec.palette : themePalette(site.theme),
+    };
+
+    const ticket = await studio.request(withPalette);
+    const at = nowIso();
+    const record: ImageTicketRecord = {
+      id: ticket.ticket,
+      siteId,
+      // A studio that answered `ready` on the first call still gets a `running`
+      // row: collecting is what ingests, and a row that starts life settled is
+      // one nothing will ever fetch the picture for.
+      status: ticket.status === 'failed' ? 'failed' : 'running',
+      spec: withPalette as unknown as Record<string, unknown>,
+      ...(ticket.error ? { error: ticket.error } : {}),
+      createdAt: at,
+      updatedAt: at,
+    };
+    await this.imageTickets.insert(record);
+
+    if (ticket.status === 'failed') {
+      throw new ValidationError(ticket.error ?? 'the image studio could not make that image');
+    }
+    return record;
+  }
+
+  /**
+   * Ask about a request, and ingest it once it is ready.
+   *
+   * Asking *is* what advances it — the studio has no worker of its own, so a
+   * ticket nobody polls never finishes. Nothing is lost by asking again later:
+   * the render is already submitted and paid for.
+   *
+   * Three rules, each of which is a way this goes wrong quietly:
+   *
+   * - **A settled ticket answers from the row**, with no call and no second
+   *   ingest. Polling twice must return the same asset ids, not the same
+   *   picture stored twice under two names — which is what a plain
+   *   "fetch then insert" would do to anybody who refreshed the panel.
+   * - **A failed poll leaves the ticket running.** The studio is usually just
+   *   busy, and marking it failed strands a picture that was on its way. The
+   *   error is reported to *this* caller and the row is left alone.
+   * - **Ready with no images is a failure.** A result that reports success and
+   *   carries nothing is worse than an error, because the caller writes an
+   *   empty asset reference into a page and finds out when somebody visits it.
+   */
+  async collectSiteImage(
+    siteId: string,
+    ticketId: string,
+    /**
+     * The same injection point `addAssetFromUrl` takes, passed straight
+     * through. Routes send nothing; a test sends a fake fetch and a fake DNS
+     * lookup, for the reason `fetch-asset.ts` gives — a guard that needs the
+     * network to prove itself is a guard nobody runs.
+     */
+    fetchOptions: FetchAssetOptions = {},
+  ): Promise<ImageTicketRecord> {
+    const studio = this.requireStudio();
+    await this.getSite(siteId);
+
+    const stored = await this.imageTickets.get(siteId, ticketId);
+    if (!stored) throw new NotFoundError('image ticket', ticketId);
+    if (stored.status !== 'running') return stored;
+
+    const ticket = await studio.read(ticketId);
+    if (ticket.status === 'running') return stored;
+
+    const at = nowIso();
+    if (ticket.status === 'failed' || ticket.images.length === 0) {
+      const error =
+        ticket.error ??
+        'the image studio reported the request finished but sent no pictures, so there is nothing to add';
+      await this.imageTickets.settle(siteId, ticketId, { status: 'failed', error, at });
+      return (await this.imageTickets.get(siteId, ticketId)) ?? { ...stored, status: 'failed', error, updatedAt: at };
+    }
+
+    /**
+     * Ingested before the row is settled, and that order is deliberate.
+     *
+     * Settling first would leave a ticket that says "ready" with no assets
+     * behind it the moment an ingest fails — unrecoverable, because the guard
+     * that makes collection idempotent also refuses to reopen a settled row.
+     * This way a failed ingest leaves the ticket running and the next poll
+     * tries again; the cost is that a *lost* race can fetch a picture twice,
+     * which is why the loser deletes what it just wrote rather than keeping it.
+     */
+    const assets = [];
+    for (const [index, url] of ticket.images.entries()) {
+      assets.push(
+        await this.addAssetFromUrl(siteId, generatedName(ticket.ticket, index, url), url, fetchOptions),
+      );
+    }
+    const assetIds = assets.map((asset) => asset.id);
+
+    const won = await this.imageTickets.settle(siteId, ticketId, {
+      status: 'ready',
+      assetIds,
+      ...(ticket.alt ? { alt: ticket.alt } : {}),
+      at,
+    });
+    if (!won) {
+      // Somebody else collected it while we were fetching. Theirs is the
+      // record, so ours are duplicates of a picture the site already has.
+      for (const asset of assets) await this.deleteAsset(siteId, asset.id).catch(() => {});
+      const winner = await this.imageTickets.get(siteId, ticketId);
+      if (winner) return winner;
+    }
+    return (
+      (await this.imageTickets.get(siteId, ticketId)) ?? {
+        ...stored,
+        status: 'ready',
+        assetIds,
+        ...(ticket.alt ? { alt: ticket.alt } : {}),
+        updatedAt: at,
+      }
+    );
+  }
+
+  /** Requests still in flight for a site — what a reopened picker resumes. */
+  async listSiteImageTickets(siteId: string): Promise<ImageTicketRecord[]> {
+    await this.getSite(siteId);
+    return this.imageTickets.listRunning(siteId);
+  }
+
+  private requireStudio(): ImageStudio {
+    if (!this.imageStudio) {
+      throw new NotConfiguredError(
+        'image generation is not configured — set STUDIO_API_URL and STUDIO_API_KEY to point at a ComfyStudio deployment',
+      );
+    }
+    return this.imageStudio;
+  }
+
   // ── Publish ──────────────────────────────────────────────────────────────
 
   publishSite(siteId: string, outDir?: string): Promise<PublishResult> {
@@ -1073,4 +1249,44 @@ function remapAssetIds<T>(value: T, idMap: Map<string, string>): T {
     return v;
   };
   return rec(structuredClone(value)) as T;
+}
+
+/**
+ * The site's colours, as a picture brief understands them.
+ *
+ * Only the three that describe the *look* — the neutrals are what a page is
+ * printed on, and handing "#ffffff, #f4f6f8, #1f2937" to a picture generator
+ * asks for a greyscale image of a colourful site. Order is deliberate:
+ * `primary` first, because a brief is read as a weighting.
+ */
+function themePalette(theme: { colors: Record<string, string> }): string[] {
+  return ['primary', 'secondary', 'accent']
+    .map((key) => theme.colors[key])
+    .filter((value): value is string => typeof value === 'string' && value.length > 0);
+}
+
+/**
+ * What a generated picture is called once it belongs to the site.
+ *
+ * Named from the **ticket**, not from the studio's URL. A remote filename is a
+ * stranger's string that has to be sanitised anyway, it is frequently a hash
+ * that means nothing to anybody, and two renders of the same brief can share
+ * it. The ticket plus the index is unique here, sorts in request order in a
+ * list of assets, and says where the picture came from a month later.
+ *
+ * The extension is taken from the URL because that is the one part of it worth
+ * trusting — a `.webp` opened as a `.png` is a broken image on a live page —
+ * and anything unrecognised falls back rather than being carried through.
+ */
+function generatedName(ticket: string, index: number, url: string): string {
+  const safeTicket = ticket.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 40) || 'image';
+  let extension = 'png';
+  try {
+    const match = /\.([a-zA-Z0-9]{2,5})$/.exec(new URL(url).pathname);
+    if (match?.[1]) extension = match[1].toLowerCase();
+  } catch {
+    // Not a URL we can parse. The default extension is corrected by the MIME
+    // the fetch reports anyway; a wrong name is cosmetic, a wrong MIME is not.
+  }
+  return `generated-${safeTicket}-${index + 1}.${extension}`;
 }

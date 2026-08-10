@@ -1,8 +1,9 @@
 import multipart from '@fastify/multipart';
 import swagger from '@fastify/swagger';
 import { componentJsonSchema, componentSummary, escapeHtml, getComponent, listComponents } from '@wb/components';
-import { ConflictError, NotFoundError, ValidationError, WbCore } from '@wb/core';
+import { ConflictError, NotConfiguredError, NotFoundError, ValidationError, WbCore } from '@wb/core';
 import {
+  ImageSpecSchema,
   NodeInputSchema,
   OpsError,
   PageMetaSchema,
@@ -166,6 +167,10 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   app.setErrorHandler((rawErr: unknown, _req, reply) => {
     if (rawErr instanceof NotFoundError) return reply.status(404).send({ error: rawErr.message });
     if (rawErr instanceof ConflictError) return reply.status(409).send({ error: rawErr.message });
+    // 501, not 422. The request was well-formed and this deployment simply
+    // cannot do that — a caller told "invalid" will reword and retry for ever,
+    // and a model on the far end will do it several times.
+    if (rawErr instanceof NotConfiguredError) return reply.status(501).send({ error: rawErr.message });
     if (rawErr instanceof OpsError) {
       return reply.status(422).send({ error: rawErr.message, opIndex: rawErr.opIndex });
     }
@@ -487,6 +492,42 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
 
   app.get('/sites/:siteId/assets', { schema: { params: SiteIdParams } }, async (req) =>
     core.listAssets(req.params.siteId),
+  );
+
+  /**
+   * Ask for a picture, and come back for it.
+   *
+   * Two routes rather than one that waits, and the split is a correctness rule
+   * rather than a latency one. The studio has queued and charged for the render
+   * by the time it answers, so the **ticket is a receipt for money already
+   * spent** — and a request that blocked until the picture was ready would be
+   * holding the only copy of that receipt inside a call the platform can kill.
+   * A serverless function that dies mid-render leaves a purchase nobody can
+   * collect.
+   *
+   * So POST returns 202 with the ticket the moment there is one, and GET does
+   * the collecting. Asking *is* what advances it — the studio has no worker of
+   * its own — and asking again later costs nothing, because the picture is
+   * already paid for. The ticket is durable, so a closed tab strands nothing:
+   * `GET /assets/generate` lists what is still in flight.
+   */
+  app.post(
+    '/sites/:siteId/assets/generate',
+    { schema: { params: SiteIdParams, body: ImageSpecSchema } },
+    async (req, reply) => {
+      const ticket = await core.requestSiteImage(req.params.siteId, req.body);
+      return reply.status(202).send(ticket);
+    },
+  );
+
+  app.get('/sites/:siteId/assets/generate', { schema: { params: SiteIdParams } }, async (req) => ({
+    tickets: await core.listSiteImageTickets(req.params.siteId),
+  }));
+
+  app.get(
+    '/sites/:siteId/assets/generate/:ticketId',
+    { schema: { params: z.object({ siteId: z.string(), ticketId: z.string() }) } },
+    async (req) => core.collectSiteImage(req.params.siteId, req.params.ticketId),
   );
 
   app.delete(

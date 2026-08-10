@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { componentJsonSchema, componentSummary, getComponent, listComponents } from '@wb/components';
 import { WbCore, guessMime } from '@wb/core';
-import { NodeInputSchema, ThemeSchema, TreeOpSchema, normalizeSlug } from '@wb/schema';
+import { ImageSpecSchema, NodeInputSchema, ThemeSchema, TreeOpSchema, normalizeSlug } from '@wb/schema';
 import { z } from 'zod';
 import { treeOutline } from './outline.js';
 
@@ -340,6 +340,66 @@ export function buildMcpServer(deps: McpDeps): McpServer {
             : null;
         if (!asset) return errText(new Error('provide either url or base64'));
         return text({ assetId: asset.id, filename: asset.filename, use: { image: { assetId: asset.id, alt: '<describe it>' } } });
+      } catch (err) {
+        return errText(err);
+      }
+    },
+  );
+
+  /**
+   * One tool, two operations, told apart by whether a ticket was named.
+   *
+   * A separate `generate_asset` and `collect_asset` would be two tools whose
+   * only difference is which half of one conversation they are in, and a model
+   * that reaches for the wrong one gets an error about a missing field rather
+   * than about what it actually did wrong. Naming the ticket is the same
+   * gesture as quoting it, which is what a caller has to do anyway.
+   *
+   * Asking is what advances the render — the studio has no worker of its own —
+   * and asking again later costs nothing, because it is already paid for.
+   */
+  server.tool(
+    'generate_asset',
+    'Ask the image studio for an original picture for a site, and collect it into the site assets. ' +
+      'Call with a spec to start (returns a ticket), then call again with that ticket to check and collect. ' +
+      'Describe what the page needs — purpose, subject, mood, the slot size — not how to make it. ' +
+      "The palette defaults to the site's own theme. Keep the ticket: it is the only way to collect a render.",
+    {
+      siteId: z.string(),
+      ticket: z.string().optional().describe('Collect an earlier request instead of starting a new one.'),
+      spec: ImageSpecSchema.optional().describe('What the picture is for. Required unless collecting a ticket.'),
+    },
+    async ({ siteId, ticket, spec }) => {
+      try {
+        if (ticket) {
+          const collected = await core.collectSiteImage(siteId, ticket);
+          return text({
+            status: collected.status,
+            ticket: collected.id,
+            ...(collected.assetIds ? { assetIds: collected.assetIds } : {}),
+            ...(collected.alt ? { alt: collected.alt } : {}),
+            ...(collected.error ? { error: collected.error } : {}),
+            ...(collected.status === 'running'
+              ? { note: 'Still rendering. Ask again in a few seconds, and keep the ticket.' }
+              : {}),
+            ...(collected.status === 'ready' && collected.assetIds?.[0]
+              ? {
+                  use: {
+                    image: { assetId: collected.assetIds[0], alt: collected.alt ?? '<describe it>' },
+                  },
+                }
+              : {}),
+          });
+        }
+        if (!spec) return errText(new Error('provide either spec (to start) or ticket (to collect)'));
+        const started = await core.requestSiteImage(siteId, spec);
+        return text({
+          status: started.status,
+          ticket: started.id,
+          note:
+            `Submitted and paid for. Call generate_asset again with ticket "${started.id}" in a few seconds ` +
+            'to collect it. Do not discard the ticket: it is the only way to reach this render.',
+        });
       } catch (err) {
         return errText(err);
       }

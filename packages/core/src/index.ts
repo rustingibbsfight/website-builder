@@ -8,3 +8,4 @@ export * from './notify.js';
 export * from './fetch-asset.js';
 export { openDb, assetDir, distDir } from './db.js';
 export * from './deploy.js';
+export * from './studio.js';
