@@ -409,3 +409,117 @@ export class ChatSessionStore {
     await this.db.execute({ sql: 'DELETE FROM chat_sessions WHERE site_id=?', args: [siteId] });
   }
 }
+
+/**
+ * One image request the studio accepted, and what became of it.
+ *
+ * The row exists because the ticket is a **receipt for money already spent**.
+ * A render is submitted at one moment and finishes at another, and everything
+ * that might be holding the id in the meantime can die: a serverless function
+ * hits its budget, a browser tab closes, a chat turn is interrupted. If the id
+ * lived only in the caller, a picture that was paid for would be unreachable —
+ * which is not a lost request, it is a lost purchase.
+ *
+ * So the row is written the moment the studio answers, before anything waits.
+ */
+export interface ImageTicketRecord {
+  id: string;
+  siteId: string;
+  status: 'running' | 'ready' | 'failed';
+  spec: Record<string, unknown>;
+  /** Set once, when the render was collected into the site's assets. */
+  assetIds?: string[];
+  alt?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const ticketFromRow = (r: Row): ImageTicketRecord => ({
+  id: str(r.id),
+  siteId: str(r.site_id),
+  status: str(r.status) as ImageTicketRecord['status'],
+  spec: JSON.parse(str(r.spec_json)) as Record<string, unknown>,
+  ...(r.asset_ids_json ? { assetIds: JSON.parse(str(r.asset_ids_json)) as string[] } : {}),
+  ...(r.alt ? { alt: str(r.alt) } : {}),
+  ...(r.error ? { error: str(r.error) } : {}),
+  createdAt: str(r.created_at),
+  updatedAt: str(r.updated_at),
+});
+
+export class ImageTicketStore {
+  constructor(private db: Client) {}
+
+  async insert(ticket: ImageTicketRecord): Promise<void> {
+    await this.db.execute({
+      sql: `INSERT INTO image_tickets (id, site_id, status, spec_json, asset_ids_json, alt, error, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      args: [
+        ticket.id,
+        ticket.siteId,
+        ticket.status,
+        JSON.stringify(ticket.spec),
+        ticket.assetIds ? JSON.stringify(ticket.assetIds) : null,
+        ticket.alt ?? null,
+        ticket.error ?? null,
+        ticket.createdAt,
+        ticket.updatedAt,
+      ],
+    });
+  }
+
+  async get(siteId: string, id: string): Promise<ImageTicketRecord | null> {
+    // Scoped by site in the query rather than checked afterwards. A ticket id
+    // is guessable enough that "read it, then compare" is one forgotten
+    // comparison away from letting one site read another's render.
+    const rows = (
+      await this.db.execute({ sql: 'SELECT * FROM image_tickets WHERE id=? AND site_id=?', args: [id, siteId] })
+    ).rows;
+    return rows[0] ? ticketFromRow(rows[0]) : null;
+  }
+
+  /**
+   * Record the outcome — once.
+   *
+   * `WHERE status='running'` is the whole guard, and it is what makes
+   * collection idempotent under a race. Two polls of the same ready ticket both
+   * see `running`, both ingest, and both try to write; only one row update
+   * succeeds, and the loser re-reads to find the winner's asset ids rather than
+   * leaving the site with the same picture stored twice under two names.
+   *
+   * A settled ticket is never reopened. `failed` and `ready` are both final:
+   * the studio does not un-fail a render, and a ticket that flipped back to
+   * running would be one nothing could ever stop polling.
+   */
+  async settle(
+    siteId: string,
+    id: string,
+    outcome: { status: 'ready' | 'failed'; assetIds?: string[]; alt?: string; error?: string; at: string },
+  ): Promise<boolean> {
+    const result = await this.db.execute({
+      sql: `UPDATE image_tickets SET status=?, asset_ids_json=?, alt=?, error=?, updated_at=?
+            WHERE id=? AND site_id=? AND status='running'`,
+      args: [
+        outcome.status,
+        outcome.assetIds ? JSON.stringify(outcome.assetIds) : null,
+        outcome.alt ?? null,
+        outcome.error ?? null,
+        outcome.at,
+        id,
+        siteId,
+      ],
+    });
+    return (result.rowsAffected ?? 0) > 0;
+  }
+
+  /** Requests still in flight, oldest first — what a picker reopens onto. */
+  async listRunning(siteId: string): Promise<ImageTicketRecord[]> {
+    const rows = (
+      await this.db.execute({
+        sql: `SELECT * FROM image_tickets WHERE site_id=? AND status='running' ORDER BY created_at ASC`,
+        args: [siteId],
+      })
+    ).rows;
+    return rows.map(ticketFromRow);
+  }
+}

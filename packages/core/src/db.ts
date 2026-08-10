@@ -80,6 +80,30 @@ const MIGRATIONS: string[][] = [
       created_at TEXT NOT NULL
     )`,
   ],
+  // v4 — image requests in flight (see #52). The row is the *receipt for a
+  // spend*: it is written the moment the studio accepts the request, before
+  // anything waits on the render, so a request that was paid for can always be
+  // collected even if the caller's connection, tab or function died. Nothing
+  // else in this schema has that property, which is why the ticket cannot live
+  // in a caller's memory.
+  //
+  // `asset_ids_json` is what makes collection idempotent: a second poll of a
+  // ticket that already ingested returns the same assets rather than fetching
+  // the same picture twice under a second id.
+  [
+    `CREATE TABLE IF NOT EXISTS image_tickets (
+      id TEXT PRIMARY KEY,
+      site_id TEXT NOT NULL REFERENCES sites(id) ON DELETE CASCADE,
+      status TEXT NOT NULL,
+      spec_json TEXT NOT NULL,
+      asset_ids_json TEXT,
+      alt TEXT,
+      error TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS idx_image_tickets_site ON image_tickets(site_id, created_at)`,
+  ],
 ];
 
 /**

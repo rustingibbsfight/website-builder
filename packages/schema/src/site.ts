@@ -105,3 +105,48 @@ export interface SiteInput {
 export function normalizeSlug(slug: string): string {
   return slug === 'index' ? '' : slug;
 }
+
+/**
+ * What to ask the image studio for.
+ *
+ * Here rather than in `core` because four surfaces send one — the HTTP route,
+ * the MCP tool, Eve's tool and the editor's picker — and a schema each is four
+ * chances for a field to exist at one end and not the other. That has already
+ * happened once in this integration: Eve's copy of the vocabulary was a
+ * `z.enum` written months before the studio grew `width`, `height`, `media`,
+ * `seconds` and `brand`, so those shipped at one end and were unreachable from
+ * the other.
+ *
+ * **The vocabulary itself stays open.** `purpose`, `aspect`, `media` and
+ * `textSafe` are plain strings and the studio validates them, because a copied
+ * enum here fails closed and silently: the caller never sees the seventh
+ * purpose, so it never asks for it, so nobody notices. A wrong value comes back
+ * as the studio's own error naming the whole accepted list, which a caller can
+ * act on in the same turn rather than after a deploy here.
+ *
+ * The numbers *are* bounded, because those are our costs rather than the
+ * studio's vocabulary: a count of forty is a bill, and a negative width is a
+ * mistake at every possible far end.
+ */
+export const ImageSpecSchema = z
+  .object({
+    purpose: z.string().min(1).describe('What the image is for on the page, e.g. hero.'),
+    subject: z.string().min(1).describe('What the picture is of, in plain words.'),
+    mood: z.string().optional().describe('e.g. "calm, clinical" or "warm, lived-in".'),
+    palette: z
+      .array(z.string())
+      .optional()
+      .describe("Hex colours. Defaults to the site's own theme, so the picture belongs to the page."),
+    aspect: z.string().optional().describe('Shape, when the slot is not laid out yet. e.g. 16/9.'),
+    width: z.number().int().positive().max(8192).optional().describe('Exact slot width in pixels.'),
+    height: z.number().int().positive().max(8192).optional().describe('Exact slot height in pixels.'),
+    minWidth: z.number().int().positive().max(8192).optional().describe('A floor under the resulting size.'),
+    media: z.string().optional().describe('"image" (default) or "video" for a clip.'),
+    seconds: z.number().positive().max(60).optional().describe('Clip length. Only with media: "video".'),
+    brand: z.string().optional().describe('A brand kit already sent to the studio.'),
+    textSafe: z.string().optional().describe('Where a headline will sit, e.g. left.'),
+    avoid: z.array(z.string()).optional().describe('e.g. ["people", "text", "logos"].'),
+    count: z.number().int().min(1).max(4).optional().describe('How many to choose between. Defaults to 1.'),
+  })
+  .strict();
+export type ImageSpecInput = z.infer<typeof ImageSpecSchema>;
