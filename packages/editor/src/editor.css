@@ -235,6 +235,40 @@ code { color: var(--accent); }
 .check { display: flex; gap: 6px; align-items: center; }
 .obj-field { border: 1px solid var(--line); border-radius: 6px; padding: 8px; display: flex; flex-direction: column; gap: 8px; margin: 0; }
 .obj-field legend { color: var(--muted); font-size: 12px; padding: 0 4px; }
+
+/* Choosing a picture. Three tabs because there are exactly three answers to
+   "which picture": one this site has, one at an address, and one that does not
+   exist yet. */
+.image-field { display: flex; flex-direction: column; gap: 8px; }
+.image-tabs { display: flex; gap: 2px; }
+.image-tabs button {
+  flex: 1; padding: 4px 6px; font-size: 12px; border: 1px solid var(--line);
+  background: transparent; color: var(--muted); border-radius: 5px; cursor: pointer;
+}
+.image-tabs button.on { background: var(--line); color: var(--fg); }
+
+/* Auto-fill rather than a fixed count: this panel is 290px on a laptop and the
+   full width of a phone, and a grid that assumed either is wrong on the other. */
+.asset-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 6px; max-height: 240px; overflow-y: auto;
+}
+.asset-grid .asset {
+  display: flex; flex-direction: column; gap: 2px; padding: 2px; cursor: pointer;
+  border: 1px solid var(--line); border-radius: 5px; background: transparent;
+}
+.asset-grid .asset.on { border-color: var(--accent); }
+.asset-grid .asset img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 3px; }
+/* The filename is a hint, not a label: it is frequently a hash, and letting it
+   wrap turns an even grid into a ragged one. */
+.asset-grid .asset span {
+  font-size: 10px; color: var(--muted); overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+
+.generate { display: flex; flex-direction: column; gap: 8px; }
+.generate .error { color: var(--danger); font-size: 12px; margin: 0; }
+.generate .muted { font-size: 12px; margin: 0; }
 .array-item { border-left: 2px solid var(--line); padding-left: 8px; }
 .array-item-bar { display: flex; justify-content: space-between; align-items: center; }
 

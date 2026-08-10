@@ -1,5 +1,20 @@
-import { useState } from 'react';
+import { createContext, useContext, useState } from 'react';
+import { ImageField } from './ImageField';
+import { isImageField, type ImageValue } from './image-field';
 import type { JsonSchema } from './types';
+
+/**
+ * Which site these props belong to.
+ *
+ * A context rather than a prop because `Field` recurses — an image can sit
+ * inside an object inside an array — and threading a site id through every
+ * level would mean every future field type has to remember to pass it on. The
+ * one that forgot would be the one whose picker silently listed nothing.
+ *
+ * Empty by default so the Inspector renders exactly as before wherever a site
+ * is not in scope, rather than throwing.
+ */
+const SiteContext = createContext<string>('');
 
 const LONG_TEXT_KEYS = new Set(['markdown', 'html', 'body', 'quote', 'subhead', 'about', 'legal', 'answer', 'text']);
 
@@ -11,13 +26,16 @@ export function SchemaFields({
   schema,
   values,
   onCommit,
+  siteId = '',
 }: {
   schema: JsonSchema;
   values: Record<string, unknown>;
   onCommit: (patch: Record<string, unknown>) => void;
+  siteId?: string;
 }) {
   const props = schema.properties ?? {};
   return (
+    <SiteContext.Provider value={siteId}>
     <div className="fields">
       {Object.entries(props).map(([key, sub]) => (
         <Field
@@ -30,6 +48,7 @@ export function SchemaFields({
         />
       ))}
     </div>
+    </SiteContext.Provider>
   );
 }
 
@@ -46,12 +65,35 @@ function Field({
   required: boolean;
   onCommit: (value: unknown) => void;
 }) {
+  const siteId = useContext(SiteContext);
   const label = (
     <span title={schema.description}>
       {name}
       {required ? ' *' : ''}
     </span>
   );
+
+  /**
+   * An image is recognised **before** the generic object branch below, which
+   * would otherwise draw it as three text boxes — `assetId`, `url`, `alt` — and
+   * setting a picture would mean knowing an asset's id and typing it.
+   *
+   * By shape rather than by name: `logo`, `background`, `avatar` and `poster`
+   * are all the same thing, and a list of names would have to grow every time
+   * somebody adds a component, silently.
+   */
+  if (isImageField(schema) && siteId) {
+    return (
+      <fieldset className="obj-field">
+        <legend>{label}</legend>
+        <ImageField
+          siteId={siteId}
+          value={value as ImageValue | undefined}
+          onCommit={(v) => onCommit(v)}
+        />
+      </fieldset>
+    );
+  }
 
   if (schema.enum) {
     return (

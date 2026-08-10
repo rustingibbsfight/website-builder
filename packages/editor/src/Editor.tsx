@@ -628,6 +628,7 @@ export function Editor({ siteId, onExit }: { siteId: string; onExit: () => void 
       <aside className="right">
         <Inspector
           key={selectedId ?? 'none'}
+          siteId={siteId}
           node={selectedNode}
           isRoot={selectedNode?.id === page.tree.id}
           isContainer={isContainer}

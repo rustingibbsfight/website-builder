@@ -1,9 +1,11 @@
 import type {
+  Asset,
   Block,
   BlockSummary,
   ChatRead,
   ComponentDetail,
   ComponentSummary,
+  ImageTicket,
   Page,
   PageMeta,
   PageSummary,
@@ -85,6 +87,30 @@ export const api = {
   // reload replay the transcript rather than start it again.
   pollChat: (siteId: string, since: number) => req<ChatRead>(`/sites/${siteId}/chat?since=${since}`),
   resetChat: (siteId: string) => req<void>(`/sites/${siteId}/chat`, { method: 'DELETE' }),
+  listAssets: (siteId: string) => req<Asset[]>(`/sites/${siteId}/assets`),
+
+  /**
+   * Ask for a picture. Comes back 202 with a ticket, never with the picture.
+   *
+   * The panel has to hold the ticket and come back for it, which is not an
+   * inconvenience of the API: the render is queued and paid for the moment this
+   * resolves, so a request that waited would be holding the only copy of a
+   * receipt inside a connection a phone can drop.
+   */
+  generateAsset: (siteId: string, spec: Record<string, unknown>) =>
+    req<ImageTicket>(`/sites/${siteId}/assets/generate`, {
+      method: 'POST',
+      body: JSON.stringify(spec),
+    }),
+
+  /** Asking is what advances it, and asking twice does not buy twice. */
+  pollGeneratedAsset: (siteId: string, ticket: string) =>
+    req<ImageTicket>(`/sites/${siteId}/assets/generate/${encodeURIComponent(ticket)}`),
+
+  /** What is still rendering for this site — what a reopened picker resumes. */
+  listImageTickets: (siteId: string) =>
+    req<{ tickets: ImageTicket[] }>(`/sites/${siteId}/assets/generate`),
+
   publish: (siteId: string) =>
     req<{ distPath: string; pageCount: number; warnings: Array<{ page: string; message: string }> }>(
       `/sites/${siteId}/publish`,

@@ -34,6 +34,7 @@ function Select({
 }
 
 export function Inspector({
+  siteId,
   node,
   isRoot,
   isContainer,
@@ -43,6 +44,8 @@ export function Inspector({
   onMoveUp,
   onMoveDown,
 }: {
+  /** Which site's assets a picture may be chosen from. */
+  siteId: string;
   node: WbNode | null;
   isRoot: boolean;
   isContainer: (type: string) => boolean;
@@ -208,6 +211,7 @@ export function Inspector({
       {tab === 'props' &&
         (detail ? (
           <SchemaFields
+            siteId={siteId}
             schema={detail.propsSchema}
             values={node.props}
             onCommit={(props) => onOps([{ op: 'update', nodeId: node.id, props }])}
