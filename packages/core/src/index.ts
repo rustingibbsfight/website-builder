@@ -4,6 +4,7 @@ export * from './stores.js';
 export * from './storage.js';
 export * from './publish-target.js';
 export * from './version-control.js';
+export * from './wordpress.js';
 export * from './notify.js';
 export * from './fetch-asset.js';
 export { openDb, assetDir, distDir } from './db.js';

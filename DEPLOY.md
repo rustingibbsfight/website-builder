@@ -72,6 +72,38 @@ vercel deploy --prod                     # from the repo root — NOT apps/wb-ap
 - Wire the contact form's `action` to a real form endpoint (e.g. Formspree).
 - Swap the placeholder SVG art for real photography via `add_asset`.
 
+## Publishing app pages to breakthrough-medspa.com
+
+Each deploy can also create the app's page on the clinic's WordPress site,
+masked to the live app with the Content Mask plugin, so visitors reach it at
+`breakthrough-medspa.com/app-<name>/` instead of a `*.vercel.app` host.
+
+1. Copy [`wordpress/wb-app-pages.php`](wordpress/wb-app-pages.php) to
+   `wp-content/mu-plugins/` on breakthrough-medspa.com (create the directory if
+   it isn't there — must-use plugins need no activation). Confirm the Content
+   Mask plugin is active.
+2. Create an Application Password for a user who can publish pages
+   (Users → Profile → Application Passwords).
+3. Put four variables on the **wb-api** project:
+
+```bash
+vercel env add WB_WORDPRESS_URL           # https://breakthrough-medspa.com
+vercel env add WB_WORDPRESS_USER          # the WordPress login
+vercel env add WB_WORDPRESS_APP_PASSWORD  # the application password
+vercel env add WB_WORDPRESS_STATUS        # draft to start with; publish once trusted
+```
+
+**Verify the masking keys before trusting this.** Content Mask's post meta keys
+are internal to that plugin, and they are the one part of this that fails
+quietly — a wrong key name creates the page and leaves it blank. Mask a page by
+hand in wp-admin, run `wp post meta list <page-id>`, and reconcile with the
+`WB_CONTENT_MASK_META` constant at the top of `wb-app-pages.php`. That constant
+is the only place the names appear.
+
+If every call comes back 401 on Apache/CGI, the `Authorization` header is being
+stripped before PHP sees it: add
+`RewriteRule ^ - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]` to `.htaccess`.
+
 ## The editor's chat with Eve
 
 The editor talks to `wb-api`, and `wb-api` talks to `wb-eve`. Eve's own HTTP

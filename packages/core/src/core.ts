@@ -56,6 +56,14 @@ import { ConflictError, NotConfiguredError, NotFoundError, ValidationError } fro
 import { createPublishTarget, type PublishTarget } from './publish-target.js';
 import { createAssetStorage, type AssetStorage } from './storage.js';
 import { createVersionControl, type VersionControl, type VersionControlResult } from './version-control.js';
+import {
+  createWordPressPublisher,
+  resolveMaskMode,
+  wordPressModeFromEnv,
+  type WordPressAppPage,
+  type WordPressModeSetting,
+  type WordPressPublisher,
+} from './wordpress.js';
 import { AssetStore, BuildStore, PageStore, SiteStore, SubmissionStore, ChatSessionStore, ImageTicketStore, type BuildRecord, type ImageTicketRecord, type SubmissionRecord } from './stores.js';
 import { createImageStudio, type BrandKit, type Guidance, type ImageSpec, type ImageStudio, type SavedBrand } from './studio.js';
 
@@ -131,6 +139,14 @@ export interface WbCoreOptions {
   /** Version control for published sites. Defaults to env selection (WB_VCS). */
   versionControl?: VersionControl | null;
   /**
+   * Companion page on a WordPress site for each deployed app. Defaults to env
+   * selection (WB_WORDPRESS_URL), and `null` when that is unset — a deployment
+   * without WordPress must deploy exactly as it did before this existed.
+   */
+  wordpress?: WordPressPublisher | null;
+  /** Default masking mode when a site does not choose one (WB_WORDPRESS_MODE). */
+  wordpressMode?: WordPressModeSetting;
+  /**
    * Public base URL of this API, used as the default `settings.formEndpoint` for
    * new sites (env: WB_PUBLIC_URL). A published site is served from a static
    * host on another origin, so a form has to post to an absolute URL — and a
@@ -160,6 +176,10 @@ export interface DeploySiteResult {
   versionControl?: VersionControlResult;
   /** Set when version control was configured but the commit failed (non-fatal). */
   versionControlError?: string;
+  /** Set when a WordPress companion page was created or updated. */
+  wordpress?: WordPressAppPage;
+  /** Set when WordPress was configured but the page failed (non-fatal). */
+  wordpressError?: string;
 }
 
 export class WbCore {
@@ -191,6 +211,8 @@ export class WbCore {
     private publicUrl?: string,
     private notifiers: readonly SubmissionNotifier[] = [],
     private imageStudio: ImageStudio | null = null,
+    private wordpress: WordPressPublisher | null = null,
+    private wordpressMode: WordPressModeSetting = 'auto',
   ) {
     this.dataDir = dataDir;
     this.sites = new SiteStore(db);
@@ -212,7 +234,20 @@ export class WbCore {
     if (publicUrl) await backfillFormEndpoint(db, publicUrl);
     const notifiers = opts.notifiers ?? createSubmissionNotifiers();
     const imageStudio = opts.imageStudio !== undefined ? opts.imageStudio : createImageStudio();
-    return new WbCore(db, storage, publishTarget, versionControl, opts.dataDir, publicUrl, notifiers, imageStudio);
+    const wordpress = opts.wordpress !== undefined ? opts.wordpress : createWordPressPublisher();
+    const wordpressMode = opts.wordpressMode ?? wordPressModeFromEnv();
+    return new WbCore(
+      db,
+      storage,
+      publishTarget,
+      versionControl,
+      opts.dataDir,
+      publicUrl,
+      notifiers,
+      imageStudio,
+      wordpress,
+      wordpressMode,
+    );
   }
 
   hasPublishTarget(): boolean {
@@ -225,6 +260,10 @@ export class WbCore {
 
   hasVersionControl(): boolean {
     return this.versionControl !== null;
+  }
+
+  hasWordPress(): boolean {
+    return this.wordpress !== null;
   }
 
   close(): void {
@@ -1048,6 +1087,32 @@ export class WbCore {
     const { pages, files, warnings } = await this.renderFullSite(siteId);
     const result = await this.publishTarget.deploy({ siteId, siteName: site.name, files });
 
+    // The app now exists at a URL nobody will ever type. Give it a page on the
+    // WordPress site people actually visit, masked to the live app.
+    //
+    // Best-effort, like version control below: the deploy has already
+    // succeeded, and a WordPress that is down or missing the companion plugin
+    // must not turn a live app into a failed command.
+    let wordpress: WordPressAppPage | undefined;
+    let wordpressError: string | undefined;
+    if (this.wordpress) {
+      const mode = resolveMaskMode(site.settings.wordpress?.mode, this.wordpressMode, files);
+      if (mode !== 'off') {
+        try {
+          wordpress = await this.wordpress.publishAppPage({
+            siteId,
+            siteName: site.name,
+            appUrl: result.url,
+            mode,
+            ...(site.settings.wordpress?.slug ? { slug: site.settings.wordpress.slug } : {}),
+            ...(site.settings.wordpress?.title ? { title: site.settings.wordpress.title } : {}),
+          });
+        } catch (err) {
+          wordpressError = err instanceof Error ? err.message : String(err);
+        }
+      }
+    }
+
     // Version control: commit this published snapshot. Best-effort — a VCS
     // hiccup must not fail a successful live deploy.
     let vcs: VersionControlResult | undefined;
@@ -1087,6 +1152,8 @@ export class WbCore {
       warnings,
       ...(vcs ? { versionControl: vcs } : {}),
       ...(vcsError ? { versionControlError: vcsError } : {}),
+      ...(wordpress ? { wordpress } : {}),
+      ...(wordpressError ? { wordpressError } : {}),
     };
   }
 
