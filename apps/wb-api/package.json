@@ -13,7 +13,7 @@
     "@wb/server": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "^22.13.1",
+    "@types/node": "24.x",
     "@vercel/node": "^5.1.8",
     "fastify": "^5.10.0",
     "typescript": "^5.7.3"

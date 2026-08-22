@@ -55,8 +55,8 @@ importers:
         version: link:../../packages/server
     devDependencies:
       '@types/node':
-        specifier: ^22.13.1
-        version: 22.20.1
+        specifier: 24.x
+        version: 24.13.3
       '@vercel/node':
         specifier: ^5.1.8
         version: 5.8.26(rollup@4.62.2)
@@ -94,12 +94,15 @@ importers:
         specifier: ^13.1.0
         version: 13.1.0
     devDependencies:
+      '@types/node':
+        specifier: 24.x
+        version: 24.13.3
       typescript:
         specifier: ^5.7.3
         version: 5.9.3
       vitest:
         specifier: ^3.0.5
-        version: 3.2.7(@edge-runtime/vm@3.2.0)(@types/node@26.1.1)(tsx@4.21.0)(yaml@2.9.0)
+        version: 3.2.7(@edge-runtime/vm@3.2.0)(@types/node@24.13.3)(tsx@4.21.0)(yaml@2.9.0)
 
   packages/components:
     dependencies:
@@ -147,12 +150,15 @@ importers:
         specifier: ^3.24.1
         version: 3.25.76
     devDependencies:
+      '@types/node':
+        specifier: 24.x
+        version: 24.13.3
       typescript:
         specifier: ^5.7.3
         version: 5.9.3
       vitest:
         specifier: ^3.0.5
-        version: 3.2.7(@edge-runtime/vm@3.2.0)(@types/node@26.1.1)(tsx@4.21.0)(yaml@2.9.0)
+        version: 3.2.7(@edge-runtime/vm@3.2.0)(@types/node@24.13.3)(tsx@4.21.0)(yaml@2.9.0)
 
   packages/editor:
     dependencies:
@@ -209,12 +215,15 @@ importers:
         specifier: ^3.24.1
         version: 3.25.76
     devDependencies:
+      '@types/node':
+        specifier: 24.x
+        version: 24.13.3
       typescript:
         specifier: ^5.7.3
         version: 5.9.3
       vitest:
         specifier: ^3.0.5
-        version: 3.2.7(@edge-runtime/vm@3.2.0)(@types/node@26.1.1)(tsx@4.21.0)(yaml@2.9.0)
+        version: 3.2.7(@edge-runtime/vm@3.2.0)(@types/node@24.13.3)(tsx@4.21.0)(yaml@2.9.0)
 
   packages/renderer:
     dependencies:
@@ -225,12 +234,15 @@ importers:
         specifier: workspace:*
         version: link:../schema
     devDependencies:
+      '@types/node':
+        specifier: 24.x
+        version: 24.13.3
       typescript:
         specifier: ^5.7.3
         version: 5.9.3
       vitest:
         specifier: ^3.0.5
-        version: 3.2.7(@edge-runtime/vm@3.2.0)(@types/node@26.1.1)(tsx@4.21.0)(yaml@2.9.0)
+        version: 3.2.7(@edge-runtime/vm@3.2.0)(@types/node@24.13.3)(tsx@4.21.0)(yaml@2.9.0)
 
   packages/schema:
     dependencies:
@@ -241,12 +253,15 @@ importers:
         specifier: ^3.24.1
         version: 3.25.76
     devDependencies:
+      '@types/node':
+        specifier: 24.x
+        version: 24.13.3
       typescript:
         specifier: ^5.7.3
         version: 5.9.3
       vitest:
         specifier: ^3.0.5
-        version: 3.2.7(@edge-runtime/vm@3.2.0)(@types/node@26.1.1)(tsx@4.21.0)(yaml@2.9.0)
+        version: 3.2.7(@edge-runtime/vm@3.2.0)(@types/node@24.13.3)(tsx@4.21.0)(yaml@2.9.0)
 
   packages/server:
     dependencies:
@@ -284,12 +299,15 @@ importers:
         specifier: ^3.24.1
         version: 3.25.76
     devDependencies:
+      '@types/node':
+        specifier: 24.x
+        version: 24.13.3
       typescript:
         specifier: ^5.7.3
         version: 5.9.3
       vitest:
         specifier: ^3.0.5
-        version: 3.2.7(@edge-runtime/vm@3.2.0)(@types/node@26.1.1)(tsx@4.21.0)(yaml@2.9.0)
+        version: 3.2.7(@edge-runtime/vm@3.2.0)(@types/node@24.13.3)(tsx@4.21.0)(yaml@2.9.0)
 
   templates/breakthrough-medical:
     dependencies:
@@ -1480,9 +1498,6 @@ packages:
 
   '@types/node@20.11.0':
     resolution: {integrity: sha512-o9bjXmDNcF7GbM4CNQpmi+TutCgap/K3w1JyKgxAjqx41zp9qlIAVFi0IhCNsJcXolEqLWhbFbEeL0PvYm4pcQ==}
-
-  '@types/node@22.20.1':
-    resolution: {integrity: sha512-EANqOCF9QFyra+4pfxUcX9STKJpCLjMbObVzljIJomAWSnuSIEAvyzEU53GaajbXJEgdh0iEcPL+DGvpUd4k1Q==}
 
   '@types/node@24.13.3':
     resolution: {integrity: sha512-Dh8vAsV36ig5wa9OX4pXvMc9D3Veibfw2wix0CUwYODLD8nkj9UsLjASr49nPg+2eKzxhBV+v7L8pXvT4e639Q==}
@@ -2878,9 +2893,6 @@ packages:
   undici-types@5.26.5:
     resolution: {integrity: sha512-JlCMO+ehdEIKqlFxk6IfVoAUVmgz7cU7zD/h9XZ0qzeosSHmUJVOzSQvvYSYWXkFXC+IfLKSIffhv0sVZup6pA==}
 
-  undici-types@6.21.0:
-    resolution: {integrity: sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==}
-
   undici-types@7.18.2:
     resolution: {integrity: sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w==}
 
@@ -4186,10 +4198,6 @@ snapshots:
     dependencies:
       undici-types: 5.26.5
 
-  '@types/node@22.20.1':
-    dependencies:
-      undici-types: 6.21.0
-
   '@types/node@24.13.3':
     dependencies:
       undici-types: 7.18.2
@@ -4212,7 +4220,7 @@ snapshots:
 
   '@types/ws@8.18.1':
     dependencies:
-      '@types/node': 22.20.1
+      '@types/node': 24.13.3
 
   '@vercel/build-utils@13.34.0':
     dependencies:
@@ -5691,8 +5699,6 @@ snapshots:
   typescript@5.9.3: {}
 
   undici-types@5.26.5: {}
-
-  undici-types@6.21.0: {}
 
   undici-types@7.18.2: {}
 
