@@ -42,6 +42,28 @@ export const PageSchema = z
   .strict();
 export type Page = z.infer<typeof PageSchema>;
 
+/**
+ * The WordPress page a deploy creates for this site (Content Mask).
+ *
+ * Absent means "whatever the deployment is configured to do" — the field
+ * exists for the site that needs to differ: one that must never appear on the
+ * WordPress domain (`off`), or one whose masking mode the automatic choice
+ * gets wrong.
+ */
+export const WordPressSettingsSchema = z
+  .object({
+    mode: z
+      .enum(['auto', 'iframe', 'redirect', 'off'])
+      .optional()
+      .describe(
+        "'auto' picks redirect when the build shows signs of Google OAuth (which refuses to render in an iframe), otherwise iframe; 'off' skips this site",
+      ),
+    slug: z.string().optional().describe('Override the derived WordPress page slug'),
+    title: z.string().optional().describe('Override the WordPress page title (defaults to the site name)'),
+  })
+  .strict();
+export type WordPressSettings = z.infer<typeof WordPressSettingsSchema>;
+
 export const SiteSettingsSchema = z
   .object({
     locale: z.string().default('en'),
@@ -51,6 +73,9 @@ export const SiteSettingsSchema = z
       .string()
       .optional()
       .describe('Base URL of the wb-api that captures stored form submissions (e.g. https://wb-api-gold.vercel.app)'),
+    wordpress: WordPressSettingsSchema.optional().describe(
+      'Per-site overrides for the WordPress companion page created on deploy',
+    ),
   })
   .strict();
 export type SiteSettings = z.infer<typeof SiteSettingsSchema>;

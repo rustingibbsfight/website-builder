@@ -283,6 +283,14 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
                 favicon: z.string().optional(),
                 baseUrl: z.string().optional(),
                 formEndpoint: z.string().optional(),
+                wordpress: z
+                  .object({
+                    mode: z.enum(['auto', 'iframe', 'redirect', 'off']).optional(),
+                    slug: z.string().optional(),
+                    title: z.string().optional(),
+                  })
+                  .strict()
+                  .optional(),
               })
               .optional(),
           })

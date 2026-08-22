@@ -142,6 +142,23 @@ A typical agent session: `create_site {template: "breakthrough-medical", brand: 
 
 **Version control:** set `WB_VCS=github` + `WB_GITHUB_TOKEN` + `WB_GITHUB_OWNER` and every deploy also commits the site's source (`site.json`) and rendered `dist/` to a per-site repo (`wb-site-<name>`). Republishes stack up as commit history — diffable and restorable. `POST /sites/:id/commit` (or Eve's `commit_site`) makes a snapshot without deploying. Commits use the GitHub API (no git binary), so it works from serverless; a commit failure never blocks a live deploy.
 
+**WordPress companion page.** The app goes live at a URL nobody will ever type. Set `WB_WORDPRESS_URL` (+ `WB_WORDPRESS_USER` and `WB_WORDPRESS_APP_PASSWORD`) and every deploy also creates — or updates — one page on that WordPress site, masked to the live app with the [Content Mask](https://wordpress.org/plugins/content-mask/) plugin, so visitors reach it at `breakthrough-medspa.com/app-<name>/`.
+
+Install [`wordpress/wb-app-pages.php`](wordpress/wb-app-pages.php) into `wp-content/mu-plugins/` first. Content Mask keeps its configuration in post meta, and the stock REST API silently drops meta that isn't registered with `show_in_rest` — posting to `/wp/v2/pages` would return 201 and create an unmasked, blank page. The companion plugin owns the meta keys, which live in a single constant (`WB_CONTENT_MASK_META`) at the top of that file, and exposes the upsert to two callers over one shared implementation:
+
+- `POST /wp-json/wb/v1/app-page` — what the deploy hook uses. One authenticated request from a serverless function, no MCP client in the deploy path.
+- The **Abilities API** (WordPress 6.9+): `wb/upsert-app-page` and the read-only `wb/inspect-app-page`, both marked `meta.public` so the [WordPress MCP Adapter](https://github.com/WordPress/mcp-adapter) exposes them as tools. This is how Eve (or any MCP client) sets these pages up and checks on them. Registration is guarded on `function_exists` — below 6.9 the abilities are simply absent and deploys are unaffected.
+
+Verify the meta keys against your install before trusting the masking: `wp post meta list <page-id>` on a page you masked by hand, or ask an agent for `wb/inspect-app-page`, which reads back through that same constant and reports which keys are actually set.
+
+- **iframe or redirect is chosen per build.** Google's OAuth consent screen sends `X-Frame-Options: DENY`, so an app with Google sign-in masked in an iframe looks perfect until somebody clicks sign-in and lands in a blank frame. Deploys scan the rendered HTML for Google auth and pick `redirect` when they find it, `iframe` otherwise.
+- `WB_WORDPRESS_MODE=auto|iframe|redirect|off` sets the default; a site can override it (and opt out) with `settings.wordpress.mode`, plus `settings.wordpress.slug` / `.title`.
+- `WB_WORDPRESS_STATUS` defaults to **`draft`** — the first automatic publish to a clinic's live domain should be a human's decision. Set `publish` once you trust it. An already-published page is never demoted back to a draft.
+- The slug is derived from the site *id*, so republishing updates one page instead of leaving near-duplicates, and two sites with the same name never collide. `WB_WORDPRESS_PARENT_ID` nests them under an existing page.
+- Like version control, it is best-effort: a WordPress that is down or missing the plugin returns `wordpressError` on the deploy result and never fails a deploy that already put the app live.
+
+Authorization note: on Apache/CGI the `Authorization` header is often stripped before PHP sees it, which application passwords need. If every call 401s, add `RewriteRule ^ - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]` to the site's `.htaccess`.
+
 **Contact forms.** A `contactForm` captures submissions in wb by default: it posts to `POST /sites/:id/submissions/:formId` (public, honeypot + rate-limited), stores the fields, and answers the visitor with a zero-JS thank-you page. That needs the site's `settings.formEndpoint` — set `WB_PUBLIC_URL` to this API's own base URL and new sites get it automatically (existing ones are backfilled once on startup). To use something else instead, set the form's `action` prop (e.g. Formspree) or `netlifyForms: true` on Netlify.
 
 Read captured messages in the editor's **📥 Submissions** panel, via `GET /sites/:id/submissions`, with the MCP `list_submissions` tool, or by asking Eve.
