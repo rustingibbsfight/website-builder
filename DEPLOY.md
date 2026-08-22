@@ -100,6 +100,13 @@ hand in wp-admin, run `wp post meta list <page-id>`, and reconcile with the
 `WB_CONTENT_MASK_META` constant at the top of `wb-app-pages.php`. That constant
 is the only place the names appear.
 
+On WordPress 6.9+ the same plugin also registers two abilities — `wb/upsert-app-page`
+and the read-only `wb/inspect-app-page` — so with the
+[WordPress MCP Adapter](https://github.com/WordPress/mcp-adapter) installed, that
+verification is a question to an agent rather than an SSH session. The abilities
+and the REST route share one implementation; the adapter is optional and the
+deploy hook never touches it.
+
 If every call comes back 401 on Apache/CGI, the `Authorization` header is being
 stripped before PHP sees it: add
 `RewriteRule ^ - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]` to `.htaccess`.
